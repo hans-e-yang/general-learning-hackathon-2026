@@ -487,6 +487,51 @@ body {
   outline-offset: 2px;
 }
 
+.board-suggestion-strip {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.6rem 0.85rem 0.85rem;
+  border-top: 1px solid var(--line);
+  min-height: 2.4rem;
+}
+
+.board-status-badge {
+  flex: none;
+  border-radius: 999px;
+  padding: 0.2rem 0.6rem;
+  font-size: 0.72rem;
+  letter-spacing: 0.02em;
+  border: 1px solid var(--line);
+  color: var(--ink-muted);
+  background: color-mix(in srgb, var(--ink) 4%, var(--paper));
+}
+
+.board-status-badge.is-blocked {
+  color: #8a1c12;
+  border-color: color-mix(in srgb, #b42318 35%, var(--line));
+  background: color-mix(in srgb, #b42318 8%, var(--paper));
+}
+
+.board-status-badge.is-on-track {
+  color: #7a5a12;
+  border-color: color-mix(in srgb, #b8860b 35%, var(--line));
+  background: color-mix(in srgb, #b8860b 8%, var(--paper));
+}
+
+.board-status-badge.is-solid {
+  color: #1c6b3f;
+  border-color: color-mix(in srgb, #1c8a4f 35%, var(--line));
+  background: color-mix(in srgb, #1c8a4f 8%, var(--paper));
+}
+
+.board-suggestion-hint {
+  margin: 0;
+  font-size: 0.85rem;
+  line-height: 1.35;
+  color: var(--ink);
+}
+
 .board-session-error {
   margin: 0;
   padding: 0.65rem 1rem;

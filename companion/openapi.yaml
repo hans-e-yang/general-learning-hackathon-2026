@@ -175,6 +175,34 @@ paths:
       responses:
         "202":
           description: Accepted
+  /session/{uuid}/board:
+    post:
+      tags: [session]
+      summary: Board check (the pane sends the student's rendered work)
+      description: |
+        The Companion pane renders the active question's board to a base64 JPEG
+        (800x1200, matching the board viewBox) after a short idle, and posts it
+        here. The backend evaluates it and streams suggestions back over
+        `/events`: `assessment.tick` (always), and on a flag `tutor.turn` plus
+        grounded `board.element` marks.
+      parameters:
+        - in: path
+          name: uuid
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BoardCheckRequest"
+      responses:
+        "202":
+          description: Accepted
+        "400":
+          description: Malformed board check (image must be a base64 JPEG)
 components:
   schemas:
     Mode:
@@ -220,6 +248,23 @@ components:
         image:
           type: string
           description: Base64-encoded JPEG (FFD8FF prefix)
+    BoardCheckRequest:
+      type: object
+      required: [questionId, image]
+      properties:
+        questionId:
+          type: string
+          description: The board (question) the student is working on
+        image:
+          type: string
+          description: Base64-encoded JPEG (FFD8FF prefix) of the rendered 800x1200 board
+        hash:
+          type: string
+          pattern: "^[0-9a-f]{16}$"
+          description: Optional content hash used to skip unchanged boards
+        timestamp:
+          type: integer
+          format: int64
     SetModeTurn:
       type: object
       required: [kind, mode]
@@ -751,21 +796,7 @@ components:
               $ref: "#/components/schemas/BoardElement"
             questionId:
               type: string
-              description: Question board this element belongs to (Tutor marks); absent on legacy frames.
-    BoardAnnotateEvent:
-      type: object
-      required: [type, data]
-      properties:
-        type:
-          type: string
-          enum: ["board.annotate"]
-        data:
-          type: object
-          required: [questionId]
-          properties:
-            questionId:
-              type: string
-              description: Board whose previous Tutor marks should be cleared before the new batch
+              description: Present on tutor marks from a board check, so the pane routes them
     BoardRemoveEvent:
       type: object
       required: [type, data]
@@ -855,6 +886,9 @@ components:
         reasoning:
           type: string
           minLength: 1
+        status:
+          $ref: "#/components/schemas/AssessmentStatus"
+          description: Overall read of the visible work; board checks always tick this
     TriageNovelty:
       type: string
       enum: [new-questions, new-material, none]

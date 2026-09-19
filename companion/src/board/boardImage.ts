@@ -1,53 +1,34 @@
-import type { BoardElement, ShapeElement, TextElement } from "@/contracts/board";
-import { BOARD_VIEWBOX } from "@/contracts/board";
+import {
+  BOARD_VIEWBOX,
+  type BoardElement,
+  type ShapeElement,
+  type TextElement,
+} from "@/contracts/board";
 
-const JPEG_QUALITY = 0.85;
-const LINE_HEIGHT = 1.35;
+const TEXT_FONT_FAMILY =
+  "system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
 
-/**
- * Rasterize the board's draw order to a base64 JPEG (no data-URL prefix) so the
- * agent can see exactly what the student sees. Browser-only; returns "" during
- * SSR or when a 2d context is unavailable.
- */
-export function renderBoardToJpeg(
-  elements: readonly BoardElement[],
-  scale = 1,
-): string {
-  if (typeof document === "undefined") return "";
-  const canvas = document.createElement("canvas");
-  canvas.width = Math.round(BOARD_VIEWBOX.width * scale);
-  canvas.height = Math.round(BOARD_VIEWBOX.height * scale);
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return "";
-  ctx.scale(scale, scale);
-  ctx.fillStyle = "#ffffff";
-  ctx.fillRect(0, 0, BOARD_VIEWBOX.width, BOARD_VIEWBOX.height);
-  ctx.lineCap = "round";
-  ctx.lineJoin = "round";
-
-  for (const el of elements) {
-    if (el.tool === "pen") drawPen(ctx, el);
-    else if (el.tool === "shape") drawShape(ctx, el);
-    else if (el.tool === "text") drawText(ctx, el);
+/** Greedy word wrap; `measure` returns the rendered width of a candidate line. */
+export function wrapText(
+  source: string,
+  maxWidth: number,
+  measure: (line: string) => number,
+): string[] {
+  const words = source.split(/\s+/).filter(Boolean);
+  if (words.length === 0) return [];
+  const lines: string[] = [];
+  let current = "";
+  for (const word of words) {
+    const candidate = current ? `${current} ${word}` : word;
+    if (current && measure(candidate) > maxWidth) {
+      lines.push(current);
+      current = word;
+    } else {
+      current = candidate;
+    }
   }
-
-  const dataUrl = canvas.toDataURL("image/jpeg", JPEG_QUALITY);
-  const comma = dataUrl.indexOf(",");
-  return comma >= 0 ? dataUrl.slice(comma + 1) : "";
-}
-
-function drawPen(
-  ctx: CanvasRenderingContext2D,
-  el: Extract<BoardElement, { tool: "pen" }>,
-): void {
-  if (el.points.length === 0) return;
-  ctx.strokeStyle = el.color;
-  ctx.lineWidth = el.strokeWidth;
-  ctx.beginPath();
-  const [first, ...rest] = el.points;
-  ctx.moveTo(first.x, first.y);
-  for (const p of rest) ctx.lineTo(p.x, p.y);
-  ctx.stroke();
+  if (current) lines.push(current);
+  return lines;
 }
 
 function drawShape(ctx: CanvasRenderingContext2D, el: ShapeElement): void {
@@ -58,55 +39,82 @@ function drawShape(ctx: CanvasRenderingContext2D, el: ShapeElement): void {
   ctx.strokeStyle = el.color;
   ctx.lineWidth = el.strokeWidth;
   ctx.beginPath();
-  if (el.shape === "ellipse") {
-    ctx.ellipse(x + w / 2, y + h / 2, Math.max(w / 2, 0.5), Math.max(h / 2, 0.5), 0, 0, Math.PI * 2);
-  } else if (el.shape === "line") {
-    ctx.moveTo(el.x, el.y);
-    ctx.lineTo(el.x + el.width, el.y + el.height);
-  } else if (el.shape === "triangle") {
-    ctx.moveTo(x + w / 2, y);
-    ctx.lineTo(x + w, y + h);
-    ctx.lineTo(x, y + h);
-    ctx.closePath();
-  } else {
-    ctx.rect(x, y, w, h);
+  switch (el.shape) {
+    case "rect":
+      ctx.rect(x, y, w, h);
+      break;
+    case "ellipse":
+      ctx.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);
+      break;
+    case "line":
+      ctx.moveTo(el.x, el.y);
+      ctx.lineTo(el.x + el.width, el.y + el.height);
+      break;
+    case "triangle":
+      ctx.moveTo(x + w / 2, y);
+      ctx.lineTo(x + w, y + h);
+      ctx.lineTo(x, y + h);
+      ctx.closePath();
+      break;
   }
   ctx.stroke();
 }
 
 function drawText(ctx: CanvasRenderingContext2D, el: TextElement): void {
   ctx.fillStyle = el.color;
-  ctx.font = `${el.fontSize}px "Helvetica Neue", Helvetica, Arial, sans-serif`;
+  ctx.font = `${el.fontSize}px ${TEXT_FONT_FAMILY}`;
   ctx.textBaseline = "top";
-  const source = el.source.replace(/\$/g, "");
-  const paragraphs = source.split("\n");
-  let cursorY = el.y;
-  for (const paragraph of paragraphs) {
-    for (const line of wrap(ctx, paragraph, el.width)) {
-      ctx.fillText(line, el.x, cursorY);
-      cursorY += el.fontSize * LINE_HEIGHT;
+  const lines = wrapText(el.source, el.width, (line) => ctx.measureText(line).width);
+  const lineHeight = el.fontSize * 1.3;
+  lines.forEach((line, i) => {
+    ctx.fillText(line, el.x, el.y + i * lineHeight);
+  });
+}
+
+/** Paint the board into a 2D context in the board's own 800x1200 coordinate space. */
+export function drawBoard(
+  ctx: CanvasRenderingContext2D,
+  elements: readonly BoardElement[],
+): void {
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, BOARD_VIEWBOX.width, BOARD_VIEWBOX.height);
+  for (const el of elements) {
+    if (el.tool === "pen") {
+      if (el.points.length < 2) continue;
+      ctx.strokeStyle = el.color;
+      ctx.lineWidth = el.strokeWidth;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.beginPath();
+      ctx.moveTo(el.points[0].x, el.points[0].y);
+      for (let i = 1; i < el.points.length; i += 1) {
+        ctx.lineTo(el.points[i].x, el.points[i].y);
+      }
+      ctx.stroke();
+    } else if (el.tool === "shape") {
+      drawShape(ctx, el);
+    } else if (el.tool === "text") {
+      drawText(ctx, el);
     }
   }
 }
 
-function wrap(
-  ctx: CanvasRenderingContext2D,
-  paragraph: string,
-  maxWidth: number,
-): string[] {
-  const words = paragraph.split(/\s+/).filter(Boolean);
-  if (words.length === 0) return [""];
-  const lines: string[] = [];
-  let line = "";
-  for (const word of words) {
-    const candidate = line ? `${line} ${word}` : word;
-    if (line && ctx.measureText(candidate).width > maxWidth) {
-      lines.push(line);
-      line = word;
-    } else {
-      line = candidate;
-    }
-  }
-  if (line) lines.push(line);
-  return lines;
+/**
+ * Render the board to a bare base64 JPEG (no `data:` prefix), matching the
+ * backend contract. Rendered at exactly the board's 800x1200 viewBox so image
+ * pixels map 1:1 to element coordinates (used for grounded annotations).
+ */
+export function boardToJpegBase64(
+  elements: readonly BoardElement[],
+  quality = 0.7,
+): string {
+  if (typeof document === "undefined") return "";
+  const canvas = document.createElement("canvas");
+  canvas.width = BOARD_VIEWBOX.width;
+  canvas.height = BOARD_VIEWBOX.height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return "";
+  drawBoard(ctx, elements);
+  const dataUrl = canvas.toDataURL("image/jpeg", quality);
+  return dataUrl.replace(/^data:image\/jpeg;base64,/, "");
 }

@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { applyBoardTurn } from "@/board/model";
+import { useCallback, useRef, useState } from "react";
+import { applyBoardElement, applyBoardTurn } from "@/board/model";
 import {
   applyElementToSlot,
   clearTutorMarks,
@@ -12,6 +12,7 @@ import {
   type BoardSlotMap,
 } from "@/board/multiBoard";
 import { renderMathText } from "@/board/mathText";
+import { sortQuestionItems } from "@/lib/questionLabel";
 import type {
   BoardElement,
   BoardPoint,
@@ -42,17 +43,8 @@ export type UseMultiBoardSessionOptions = {
   /** `live` subscribes to the Session SSE stream so Tutor marks reach the boards. */
   mode?: BoardChannelMode;
   onStrokeEnd?: (element: BoardElement) => void;
-  /**
-   * Called once the student has stopped changing the active board for `idleMs`.
-   * The caller ships the snapshot to the agent; return a promise to keep the
-   * hook from firing again until it settles.
-   */
-  onIdle?: (input: {
-    questionId: string;
-    elements: BoardElement[];
-  }) => void | Promise<void>;
-  /** Quiet period before `onIdle` fires. Default 5000ms. */
-  idleMs?: number;
+  /** Fired after any local board mutation; drives the debounced board check. */
+  onChange?: () => void;
 };
 
 /**
@@ -64,8 +56,7 @@ export function useMultiBoardSession({
   sessionUuid,
   mode,
   onStrokeEnd,
-  onIdle,
-  idleMs = 5000,
+  onChange,
 }: UseMultiBoardSessionOptions = {}) {
   const [questions, setQuestions] = useState<{ id: string; label: string }[]>(
     [],
@@ -173,7 +164,9 @@ export function useMultiBoardSession({
 
   const syncQuestions = useCallback(
     (qs: { id: string; label: string }[]) => {
-      const visible = qs.filter((q) => !deletedIdsRef.current.has(q.id));
+      const visible = sortQuestionItems(
+        qs.filter((q) => !deletedIdsRef.current.has(q.id)),
+      );
       setQuestions(visible.map((q) => ({ id: q.id, label: q.label })));
       setBoards((prev) => ensureBoardSlots(prev, visible));
       activateQuestion((prev) => pickActiveQuestionId(prev, visible));
@@ -214,9 +207,20 @@ export function useMultiBoardSession({
         const current = prev[activeQuestionId] ?? [];
         return { ...prev, [activeQuestionId]: updater(current) };
       });
-      setRevision((r) => r + 1);
+      onChange?.();
     },
-    [activeQuestionId],
+    [activeQuestionId, onChange],
+  );
+
+  /** Merge a tutor mark delivered by a board check into the matching board. */
+  const applyRemoteElement = useCallback(
+    (questionId: string, element: BoardElement) => {
+      setBoards((prev) => ({
+        ...prev,
+        [questionId]: applyBoardElement(prev[questionId] ?? [], element),
+      }));
+    },
+    [],
   );
 
   const commitTurn = useCallback(
@@ -395,6 +399,7 @@ export function useMultiBoardSession({
     setActiveQuestionId,
     syncQuestions,
     deleteQuestion,
+    applyRemoteElement,
     goPrev,
     goNext,
     elements,

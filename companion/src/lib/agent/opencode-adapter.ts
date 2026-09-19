@@ -219,7 +219,9 @@ const ANNOTATE_SYSTEM = [
   "Ring that region with a single ellipse that encloses the error with a little padding; do not fill it.",
   "Write one concise comment of one or two sentences that explains the specific reasoning error and what to re-examine, without revealing the final answer or the corrected value. Place it BESIDE the ring — to the right if there is room, otherwise to the left. Never place the comment on top of the student's writing or inside the ring.",
   "Never erase, remove, move, or cover the student's work, and never write the final answer or a numeric result.",
-  'Coordinates are in an 800x1200 canvas. Respond with strict JSON: {"annotations":[{"tool":"shape","shape":"ellipse","x":0,"y":0,"width":0,"height":0},{"tool":"text","x":0,"y":0,"source":"short note"}]}. When no error is present, respond exactly {"annotations":[]}.',
+  "When a board image is attached, use it to place marks precisely over the part of the student's work that needs another look; coordinates are the same 800x1200 space as the image.",
+  'Respond with strict JSON: {"annotations":[{"tool":"text","x":0,"y":0,"source":"short note"},{"tool":"shape","shape":"rect|ellipse|line|triangle","x":0,"y":0,"width":0,"height":0},{"tool":"pen","points":[{"x":0,"y":0}]}]}.',
+  "Return an empty annotations array when no mark would help.",
 ].join(" ");
 
 const IDK_SYSTEM = [
@@ -232,9 +234,10 @@ const IDK_SYSTEM = [
 const WATCH_SYSTEM = [
   "You are a live watcher for a student's handwritten work on a whiteboard or worksheet.",
   "Look at the work in the image and the surrounding question/draft context.",
-  'Respond with strict JSON: {"flag":true|false,"severity":"low|medium|high","ghostKey":"short-slug","reasoning":"one sentence"}.',
+  'Respond with strict JSON: {"flag":true|false,"severity":"low|medium|high","ghostKey":"short-slug","reasoning":"one sentence","status":"blocked|on-track|solid"}.',
   "Set flag=false when the work is on track or not yet legible.",
   "When flag=true, severity reflects how serious the slip is and ghostKey is a short stable slug for the kind of slip (for example \"sign-error\" or \"unit-mismatch\") so repeats can be counted.",
+  "status is an overall read of how far the visible work goes: blocked (no usable attempt), on-track (right direction, incomplete), solid (sound).",
   "Never provide the correction or the answer.",
 ].join(" ");
 
@@ -523,6 +526,11 @@ export class OpenCodeAdapter implements LLMAdapter {
     ];
     if (input.hint) lines.push(`Tutor hint:\n${input.hint}`);
     if (input.message) lines.push(`Student asks:\n${input.message}`);
+    if (input.image) {
+      lines.push(
+        "The board is attached as an image (800x1200); place marks on the exact spot to reconsider, using that same 800x1200 coordinate space."
+      );
+    }
     lines.push(`Canvas elements:\n${boardSummary}`);
 
     if (input.image) {

@@ -11,6 +11,69 @@ export function normalizeQuestionLabel(
   return String(index + 1);
 }
 
+export interface QuestionOrderKey {
+  /** Leading problem number, if the label has one (e.g. 1 in "1a"). */
+  number: number | null;
+  /** Sub-part letter, lowercased (e.g. "a" in "1a"); "" when absent. */
+  letter: string;
+  /** Normalized whole label, used as the final tie-breaker. */
+  text: string;
+}
+
+/** Split a problem label ("1a", "12", "b", "1a.iii") into sortable parts. */
+export function parseQuestionLabel(label: string): QuestionOrderKey {
+  const trimmed = label.trim().toLowerCase();
+  const numbered = trimmed.match(/^(\d+)\s*([a-z])?/);
+  if (numbered) {
+    return {
+      number: Number.parseInt(numbered[1], 10),
+      letter: numbered[2] ?? "",
+      text: trimmed,
+    };
+  }
+  const lettered = trimmed.match(/^([a-z])/);
+  if (lettered) {
+    return { number: null, letter: lettered[1], text: trimmed };
+  }
+  return { number: null, letter: "", text: trimmed };
+}
+
+/**
+ * Natural problem order: numeric before alphabetic, then by number, then by
+ * sub-part letter, then label text. So 1 < 1a < 1b < 2 < 10 (not "1, 10, 2").
+ * Unnumbered labels (e.g. "iv") sort after numbered ones, alphabetically.
+ */
+export function compareQuestionLabels(a: string, b: string): number {
+  const ka = parseQuestionLabel(a);
+  const kb = parseQuestionLabel(b);
+
+  if (ka.number !== null && kb.number !== null) {
+    if (ka.number !== kb.number) return ka.number - kb.number;
+    if (ka.letter !== kb.letter) return ka.letter < kb.letter ? -1 : 1;
+  } else if (ka.number !== null) {
+    return -1;
+  } else if (kb.number !== null) {
+    return 1;
+  } else if (ka.letter !== kb.letter) {
+    return ka.letter < kb.letter ? -1 : 1;
+  }
+
+  return ka.text < kb.text ? -1 : ka.text > kb.text ? 1 : 0;
+}
+
+/** Stable sort of labeled items into natural problem order. */
+export function sortQuestionItems<T extends { label: string }>(
+  items: readonly T[],
+): T[] {
+  return items
+    .map((item, index) => ({ item, index }))
+    .sort(
+      (x, y) =>
+        compareQuestionLabels(x.item.label, y.item.label) || x.index - y.index,
+    )
+    .map(({ item }) => item);
+}
+
 type LabelSource = { label?: string; text: string };
 
 function exerciseNumberInText(text: string): number | null {

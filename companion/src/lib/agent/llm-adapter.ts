@@ -93,6 +93,8 @@ export interface AnnotateInput {
   hint?: string;
   message?: string;
   captureHash?: string;
+  /** Rendered 800x1200 board image, so marks can be grounded on the work. */
+  image?: string;
   /** Current canvas elements, so the agent can place marks relative to the student's work. */
   board: BoardElement[];
   /** Snapshot of the rendered canvas (base64 JPEG), for vision-guided marks. */

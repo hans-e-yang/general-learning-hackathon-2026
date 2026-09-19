@@ -7,6 +7,7 @@ import type { LLMAdapter } from "./llm-adapter";
 import {
   assessAllDrafts,
   assessDraft,
+  checkBoard,
   configureAgentLoop,
   extractFromCapture,
   processTurn,
@@ -709,6 +710,23 @@ describe("agent/loop extract (#14)", () => {
     expect(get("u1")?.worksheet.map((q) => q.id)).toEqual(["q-1a", "q-1b"]);
   });
 
+  it("keeps the worksheet in printed problem order even if the model returns shuffled", async () => {
+    const { publisher } = capture();
+    const shuffled = [
+      { id: "q-2", index: 0, text: "Problem two", label: "2" },
+      { id: "q-1b", index: 1, text: "Part b", label: "1b" },
+      { id: "q-10", index: 2, text: "Problem ten", label: "10" },
+      { id: "q-1a", index: 3, text: "Part a", label: "1a" },
+    ];
+    const stub: LLMAdapter = { ...fakeAdapter, extract: async () => shuffled };
+    configureAgentLoop({ adapter: stub, publishEvent: publisher });
+    seedSession("u1");
+    await extractFromCapture("u1", "feedfacec0ffee01", 0);
+    const state = get("u1")!;
+    expect(state.worksheet.map((q) => q.label)).toEqual(["1a", "1b", "2", "10"]);
+    expect(state.worksheet.map((q) => q.index)).toEqual([0, 1, 2, 3]);
+  });
+
   it("extends the worksheet when later extracts unlock new question ids", async () => {
     const { publisher } = capture();
     configureAgentLoop({ adapter: fakeAdapter, publishEvent: publisher });
@@ -1154,5 +1172,105 @@ describe("agent/loop lazy boot", () => {
     });
     await processTurn("u1", { kind: "requestCheck", questionId: "q1" });
     expect(events.some((e) => e.evt.type === "tutor.turn")).toBe(true);
+  });
+});
+
+describe("agent/loop board check", () => {
+  it("always publishes an assessment.tick from the watch verdict", async () => {
+    const { events, publisher } = capture();
+    configureAgentLoop({
+      adapter: stubAdapter({
+        watch: async () => ({ flag: false, reasoning: "looks fine", status: "on-track" }),
+      }),
+      publishEvent: publisher,
+    });
+    seedSession("u1", {
+      worksheet: [{ id: "q1", index: 0, text: "x", status: "blocked" }],
+    });
+
+    await checkBoard("u1", { questionId: "q1", image: "AAAA" });
+
+    const tick = events.find((e) => e.evt.type === "assessment.tick");
+    expect(tick?.evt.type === "assessment.tick" && tick.evt.data.status).toBe("on-track");
+    expect(events.some((e) => e.evt.type === "tutor.turn")).toBe(false);
+  });
+
+  it("falls back to blocked/on-track when the verdict omits status", async () => {
+    const { events, publisher } = capture();
+    configureAgentLoop({
+      adapter: stubAdapter({
+        watch: async () => ({ flag: true, severity: "low", reasoning: "slip" }),
+      }),
+      publishEvent: publisher,
+    });
+    seedSession("u1", {
+      worksheet: [{ id: "q1", index: 0, text: "x", status: "blocked" }],
+    });
+
+    await checkBoard("u1", { questionId: "q1", image: "AAAA" });
+
+    const tick = events.find((e) => e.evt.type === "assessment.tick");
+    expect(tick?.evt.type === "assessment.tick" && tick.evt.data.status).toBe("blocked");
+  });
+
+  it("emits a hint and a grounded board.element with questionId on a flag", async () => {
+    const { events, publisher } = capture();
+    configureAgentLoop({
+      adapter: stubAdapter({
+        watch: async () => ({
+          flag: true,
+          severity: "medium",
+          ghostKey: "sign-error",
+          reasoning: "sign flipped",
+          status: "blocked",
+        }),
+        annotate: async () => [
+          {
+            kind: "board-shape",
+            element: {
+              id: "tut-1",
+              author: "tutor",
+              shape: "ellipse",
+              x: 10,
+              y: 20,
+              width: 30,
+              height: 40,
+            },
+          },
+        ],
+      }),
+      publishEvent: publisher,
+    });
+    seedSession("u1", {
+      worksheet: [{ id: "q1", index: 0, text: "x", status: "blocked" }],
+    });
+
+    await checkBoard("u1", { questionId: "q1", image: "AAAA" });
+
+    expect(events.some((e) => e.evt.type === "tutor.turn")).toBe(true);
+    const boardEvt = events.find((e) => e.evt.type === "board.element");
+    if (boardEvt?.evt.type !== "board.element") throw new Error("expected board.element");
+    expect(boardEvt.evt.data.questionId).toBe("q1");
+    expect(get("u1")!.board.some((el) => el.author === "tutor")).toBe(true);
+  });
+
+  it("records a board-sourced watch entry on the transcript", async () => {
+    const { publisher } = capture();
+    configureAgentLoop({
+      adapter: stubAdapter({
+        watch: async () => ({ flag: false, reasoning: "fine", status: "on-track" }),
+      }),
+      publishEvent: publisher,
+    });
+    seedSession("u1", {
+      worksheet: [{ id: "q1", index: 0, text: "x", status: "blocked" }],
+    });
+
+    await checkBoard("u1", { questionId: "q1", image: "AAAA" });
+
+    const watch = get("u1")!.context.find((c) => c.kind === "watch");
+    if (watch?.kind !== "watch") throw new Error("expected watch entry");
+    expect(watch.source).toBe("board");
+    expect(watch.questionId).toBe("q1");
   });
 });
