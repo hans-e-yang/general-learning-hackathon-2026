@@ -1,0 +1,69 @@
+import type {
+  AssessmentStatus,
+  ExtractedQuestion,
+  QuestionBlock,
+  TutorTurn,
+  WatchVerdict,
+} from "@/lib/contracts";
+
+export type {
+  AssessmentStatus,
+  ExtractedQuestion,
+  HintEscalation,
+  QuestionBlock,
+  TutorTurn,
+  WatchSeverity,
+  WatchVerdict,
+} from "@/lib/contracts";
+
+export interface ScoutInput {
+  captureHash: string;
+  pageIndex: number;
+  questionText?: string;
+  draftText?: string;
+}
+
+export interface ScoutVerdict {
+  status: AssessmentStatus;
+  reasoning: string;
+}
+
+export interface ExtractInput {
+  captureHash: string;
+  pageIndex: number;
+  questionText?: string;
+  draftText?: string;
+}
+
+export interface TutorInput {
+  questionId: string;
+  questionText: string;
+  draftText?: string;
+  message?: string;
+  threadHistory: TutorTurn[];
+  currentLevel: number;
+  captureHash?: string;
+}
+
+export interface WatchInput {
+  captureHash: string;
+  pageIndex: number;
+  questionText?: string;
+  draftText?: string;
+  recurrenceCount?: number;
+}
+
+export interface IdkInput {
+  questionId: string;
+  questionText: string;
+  draftText?: string;
+}
+
+export interface LLMAdapter {
+  readonly name: string;
+  extract(input: ExtractInput): Promise<ExtractedQuestion[]>;
+  scout(input: ScoutInput): Promise<ScoutVerdict>;
+  tutor(input: TutorInput): Promise<TutorTurn>;
+  watch(input: WatchInput): Promise<WatchVerdict>;
+  idk(input: IdkInput): Promise<TutorTurn>;
+}
