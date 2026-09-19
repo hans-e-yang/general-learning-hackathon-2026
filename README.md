@@ -5,6 +5,7 @@ Split-screen browser study companion: the Chrome extension live-reads the docume
 - Scope of the first build: [spec issue #2](https://github.com/hans-e-yang/general-learning-hackathon-2026/issues/2)
 - Domain vocabulary: `CONTEXT.md`
 - Ingestion decision: `docs/adr/0001-vision-llm-screen-reading.md`
+- Lane B (backend) flow + contracts: `docs/agentic-loop.md`
 
 ## Deferred concern: the Practice Loop (do not forget)
 

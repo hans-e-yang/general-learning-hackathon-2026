@@ -10,6 +10,11 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 ## Lane B ownership (branch: `session`)
 
+End-to-end flow + contract overview lives at `docs/agentic-loop.md` (top of repo).
+Update that document alongside any change to the SSE wire shapes or routes.
+
+## Lane B ownership (branch: `session`)
+
 This app is the Lane B backend for Circlr (see GitHub issues `#10`, `#11`, `#12`,
 `#14`-`#17`, `#20`, `#22`-`#23`, all labelled `lane:backend`).
 
