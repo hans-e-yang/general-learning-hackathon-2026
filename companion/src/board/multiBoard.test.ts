@@ -21,6 +21,16 @@ describe("ensureBoardSlots", () => {
     expect(boards.a).toHaveLength(1);
     expect(boards.b).toHaveLength(0);
   });
+
+  it("retains ink when a question leaves the list", () => {
+    const prev = {
+      "q-removed": [{ id: "pen-1" } as never],
+      "q-kept": [],
+    };
+    const next = ensureBoardSlots(prev, [{ id: "q-kept" }]);
+    expect(next["q-removed"]).toHaveLength(1);
+    expect(next["q-kept"]).toEqual([]);
+  });
 });
 
 describe("pickActiveQuestionId", () => {

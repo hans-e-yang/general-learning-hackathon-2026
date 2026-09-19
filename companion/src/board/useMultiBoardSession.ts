@@ -43,7 +43,8 @@ export function useMultiBoardSession({
 }: UseMultiBoardSessionOptions = {}) {
   const [questions, setQuestions] = useState<{ id: string }[]>([]);
   const [boards, setBoards] = useState<BoardSlotMap>({});
-  const [activeQuestionId, setActiveQuestionId] = useState<string | null>(null);
+  const [activeQuestionId, setActiveQuestionIdState] =
+    useState<string | null>(null);
   const [tool, setTool] = useState<BoardTool>("pen");
   const [penColor, setPenColor] = useState(colorForAuthor("student"));
   const [penWeight, setPenWeight] = useState(DEFAULT_PEN_WEIGHT);
@@ -55,19 +56,48 @@ export function useMultiBoardSession({
   const elements =
     activeQuestionId !== null ? (boards[activeQuestionId] ?? []) : [];
 
-  const syncQuestions = useCallback((qs: { id: string }[]) => {
-    setQuestions(qs);
-    setBoards((prev) => ensureBoardSlots(prev, qs));
-    setActiveQuestionId((prev) => pickActiveQuestionId(prev, qs));
-  }, []);
+  /** Switch active board; clears in-flight gesture and selection when id changes. */
+  const activateQuestion = useCallback(
+    (resolve: string | null | ((prev: string | null) => string | null)) => {
+      setActiveQuestionIdState((prev) => {
+        const next = typeof resolve === "function" ? resolve(prev) : resolve;
+        if (next !== prev) {
+          setLivePoints(null);
+          setSelectedId(null);
+        }
+        return next;
+      });
+    },
+    [],
+  );
+
+  const setActiveQuestionId = useCallback(
+    (resolve: string | null | ((prev: string | null) => string | null)) => {
+      activateQuestion(resolve);
+    },
+    [activateQuestion],
+  );
+
+  const syncQuestions = useCallback(
+    (qs: { id: string }[]) => {
+      setQuestions(qs);
+      setBoards((prev) => ensureBoardSlots(prev, qs));
+      activateQuestion((prev) => pickActiveQuestionId(prev, qs));
+    },
+    [activateQuestion],
+  );
 
   const goPrev = useCallback(() => {
-    setActiveQuestionId((prev) => neighborQuestionId(questions, prev, -1) ?? prev);
-  }, [questions]);
+    activateQuestion(
+      (prev) => neighborQuestionId(questions, prev, -1) ?? prev,
+    );
+  }, [questions, activateQuestion]);
 
   const goNext = useCallback(() => {
-    setActiveQuestionId((prev) => neighborQuestionId(questions, prev, 1) ?? prev);
-  }, [questions]);
+    activateQuestion(
+      (prev) => neighborQuestionId(questions, prev, 1) ?? prev,
+    );
+  }, [questions, activateQuestion]);
 
   const updateActiveBoard = useCallback(
     (updater: (prev: BoardElement[]) => BoardElement[]) => {
