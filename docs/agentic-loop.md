@@ -89,10 +89,10 @@ a refresh.
 | `scout({captureHash, pageIndex, draftText, questionText, image?})` → `ScoutVerdict` | Cheap/fast quality assessment. `escalate` says whether the Tutor should speak (#29). Uses the vision model when an `image` is attached. | Material route + every `saveDraft` (#15); `/turn kind:"assess"` (#29). |
 | `tutor({questionId, questionText, draftText, message?, threadHistory, currentLevel, captureHash?, image?})` → `TutorTurn` | Socratic turn. Hint level 0–3; never a final answer (#16). Uses the vision model when an `image` is attached. | `/turn requestCheck`, `/turn ask`, flag escalations from the watcher (#23). |
 >>>>>>> 017927f (c)
-| `watch({captureHash, pageIndex, questionText?, draftText?, recurrenceCount?})` → `WatchVerdict` | Live canvas watcher. Returns `{flag, severity?, ghostKey?, reasoning}` (#22). | `/material` after a non-deduped capture. |
+| `watch({captureHash, pageIndex, questionText?, draftText?, recurrenceCount?})` → `WatchVerdict` | Live canvas watcher. Returns `{flag, severity?, ghostKey?, reasoning, status?}` (#22). `status` (blocked/on-track/solid) feeds the board-check tick. | `/material` after a non-deduped capture; `/board` for a board check. |
 | `idk({questionId, questionText, draftText?, image?})` → `TutorTurn` | Smallest-unblock escape hatch (#23). Level 0; never a final answer. Uses the vision model when an `image` is attached. | `/turn idk`. |
 | `triage({captureHash, pageIndex, image, contextSummary})` → `TriageVerdict` | Small vision gate: does this capture carry information the session context does not already hold? | `/material`, before `extract` (#28). |
-| `annotate({questionId?, questionText?, draftText?, hint?, message?, captureHash?, board})` → `BoardAnnotationTurn[]` | Additive Tutor marks on the shared canvas: text, shapes (circle/arrow/line), pen strokes. Never erase/remove/move student work; never a final answer. | Loop, after every `tutor`/`idk` turn (`requestCheck`, `ask`, `assess`, `idk`, watcher escalation). |
+| `annotate({questionId?, questionText?, draftText?, hint?, message?, captureHash?, image?, board})` → `BoardAnnotationTurn[]` | Additive Tutor marks on the shared canvas: text, shapes (circle/arrow/line), pen strokes. Uses the vision model when `image` is attached so marks are grounded on the 800x1200 board. Never erase/remove/move student work; never a final answer. | Loop, after every `tutor`/`idk` turn (`requestCheck`, `ask`, `assess`, `idk`, watcher escalation, board check). |
 
 `FakeAdapter` is the default (`CIRCLR_LLM=fake`). All 110 tests run against it
 without network calls or vendor keys per the spec's test discipline.
@@ -491,3 +491,38 @@ POST /session/<uuid>/turn
    <-- tutor.turn + board.element (annotation) ------|
 ```
 
+
+## 15. Board check: the pane sends the student's work
+
+The extension can only photograph the active **tab**, not the side panel, so it
+cannot see what the student draws. The pane drives a second, independent loop for
+the board:
+
+1. After the student stops drawing/texting for **1.5 s**, the pane renders the
+   active question's board to an **800×1200 JPEG** (`boardImage.ts`, a canvas
+   renderer over `BoardElement[]`; math text degrades to source) and skips the
+   post when the board is empty or unchanged.
+2. `POST /session/:uuid/board` with `BoardCheckRequest`:
+   ```json
+   { "questionId": "q-p0-0", "image": "<base64 JPEG>", "hash": "<optional 16-hex>", "timestamp": 0 }
+   ```
+   Route: `src/app/session/[uuid]/board/route.ts` → `checkBoard` in `loop.ts`.
+3. The backend runs the **`watch`** role on that image and always publishes
+   `assessment.tick` with the verdict's `status` (`blocked|on-track|solid`).
+4. On a flag, the shared watcher tail runs: ghost counting (board ghosts are
+   namespaced `board:<ghostKey>` so they don't cross-talk with the document
+   watcher), a `flag` event, and — unless silent — `tutor.turn` plus
+   `annotate(...)` on the vision model. The annotator sees the same board image
+   and returns coordinates in that 800×1200 space, so circles land on the work.
+   Tutor marks are published as `board.element` with `questionId`.
+5. The pane subscribes to `assessment.tick` / `tutor.turn` / `board.element` via
+   `session/writingChannel.ts`, shows a status badge + hint strip below the
+   carousel, and merges grounded tutor marks into the matching board.
+
+```
+pane: pen-up + 1.5s idle
+   |--> boardToJpegBase64(active board) --> POST /session/<uuid>/board
+   |<-- assessment.tick (status) ----------+
+   |<-- flag / tutor.turn ----------------|  when watch flags
+   |<-- board.element {element, questionId}+
+```

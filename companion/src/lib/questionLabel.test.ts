@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { composeQuestionLabels, normalizeQuestionLabel } from "./questionLabel";
+import {
+  compareQuestionLabels,
+  composeQuestionLabels,
+  normalizeQuestionLabel,
+  sortQuestionItems,
+} from "./questionLabel";
 
 describe("normalizeQuestionLabel", () => {
   it("trims and collapses whitespace", () => {
@@ -54,5 +59,56 @@ describe("composeQuestionLabels", () => {
         { text: "b) Find E[X]." },
       ]),
     ).toEqual(["2", "2a", "2b"]);
+  });
+});
+
+describe("compareQuestionLabels / sortQuestionItems", () => {
+  it("orders numbers numerically, not lexically (2 before 10)", () => {
+    expect(
+      sortQuestionItems([{ label: "10" }, { label: "2" }, { label: "1" }]).map(
+        (q) => q.label,
+      ),
+    ).toEqual(["1", "2", "10"]);
+  });
+
+  it("orders sub-part letters within a number (1 < 1a < 1b < 2)", () => {
+    expect(
+      sortQuestionItems([
+        { label: "2" },
+        { label: "1b" },
+        { label: "1a" },
+        { label: "1" },
+      ]).map((q) => q.label),
+    ).toEqual(["1", "1a", "1b", "2"]);
+  });
+
+  it("sorts a mixed, shuffled list into printed order", () => {
+    const shuffled = ["2b", "1a", "10", "2a", "1b", "1"];
+    expect(sortQuestionItems(shuffled.map((label) => ({ label }))).map((q) => q.label)).toEqual(
+      ["1", "1a", "1b", "2a", "2b", "10"],
+    );
+  });
+
+  it("puts unnumbered labels after numbered ones, alphabetically", () => {
+    expect(
+      sortQuestionItems([{ label: "b" }, { label: "1" }, { label: "a" }]).map(
+        (q) => q.label,
+      ),
+    ).toEqual(["1", "a", "b"]);
+  });
+
+  it("is stable for equal labels", () => {
+    const items = [
+      { label: "1", id: "first" },
+      { label: "1", id: "second" },
+    ];
+    expect(sortQuestionItems(items).map((q) => q.id)).toEqual([
+      "first",
+      "second",
+    ]);
+  });
+
+  it("compareQuestionLabels handles equal labels", () => {
+    expect(compareQuestionLabels("1a", "1a")).toBe(0);
   });
 });

@@ -7,6 +7,7 @@ import { fakeAdapter } from "@/lib/agent/fake-adapter";
 import type { LLMAdapter } from "@/lib/agent/llm-adapter";
 import { POST as startSession } from "@/app/session/route";
 import { POST as postMaterial } from "@/app/session/[uuid]/material/route";
+import { POST as postBoard } from "@/app/session/[uuid]/board/route";
 import { GET as getEvents } from "@/app/session/[uuid]/events/route";
 import { POST as postTurn } from "@/app/session/[uuid]/turn/route";
 import { GET as getExport } from "@/app/session/[uuid]/export/route";
@@ -742,6 +743,54 @@ describe("/session/:uuid/material POST -> SSE pipeline (#14/#15)", () => {
     expect(buf).toContain("worksheet");
     expect(buf).toContain("q-1a");
     expect(buf).toContain('"label":"1a"');
+  });
+});
+
+describe("/session/:uuid/board POST (board check)", () => {
+  it("accepts a rendered board image and returns 202", async () => {
+    const s = (await (
+      await startSession(req("http://test.local/session", { method: "POST" }))
+    ).json()) as { uuid: string };
+    getOrCreate(s.uuid);
+    const res = await postBoard(
+      req(`http://test.local/session/${s.uuid}/board`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ questionId: "q-p0-0", image: JPEG_B64, hash: "feedfacec0ffee01" }),
+      }),
+      { params: Promise.resolve({ uuid: s.uuid }) }
+    );
+    expect(res.status).toBe(202);
+  });
+
+  it("rejects a non-JPEG board image with 400", async () => {
+    const s = (await (
+      await startSession(req("http://test.local/session", { method: "POST" }))
+    ).json()) as { uuid: string };
+    getOrCreate(s.uuid);
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).toString("base64");
+    const res = await postBoard(
+      req(`http://test.local/session/${s.uuid}/board`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ questionId: "q-p0-0", image: png }),
+      }),
+      { params: Promise.resolve({ uuid: s.uuid }) }
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("404s for an unknown uuid", async () => {
+    const uuid = "00000000-0000-4000-8000-000000000000";
+    const res = await postBoard(
+      req(`http://test.local/session/${uuid}/board`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ questionId: "q-p0-0", image: JPEG_B64 }),
+      }),
+      { params: Promise.resolve({ uuid }) }
+    );
+    expect(res.status).toBe(404);
   });
 });
 

@@ -1,18 +1,39 @@
 "use client";
 
-import { useEffect, useState, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { BoardCarousel } from "@/board/BoardCarousel";
 import { BoardJumpStrip } from "@/board/BoardJumpStrip";
 import { BoardSurface } from "@/board/BoardSurface";
 import { BoardToolbar } from "@/board/BoardToolbar";
+import { boardToJpegBase64 } from "@/board/boardImage";
 import { neighborQuestionId } from "@/board/multiBoard";
 import { useMultiBoardSession } from "@/board/useMultiBoardSession";
+import type { BoardElement } from "@/contracts/board";
+import type { AssessmentStatus } from "@/lib/contracts";
 import { normalizeQuestionLabel } from "@/lib/questionLabel";
+import {
+  postBoardCheck,
+  subscribeBoardSuggestions,
+} from "@/session/writingChannel";
 import { subscribeWorksheet } from "@/session/worksheetChannel";
 
 const SESSION_KEY = "circlr-session-uuid";
 /** Clear the spinner if extract never returns (network / model hang). */
 const CAPTURE_PROCESSING_TIMEOUT_MS = 90_000;
+/** Quiet period after the student stops drawing before we ask for a look. */
+const BOARD_CHECK_DEBOUNCE_MS = 1_500;
+
+const STATUS_LABEL: Record<AssessmentStatus, string> = {
+  blocked: "Needs work",
+  "on-track": "On track",
+  solid: "Solid",
+};
 
 function readQuerySessionUuid(): string | null {
   if (typeof window === "undefined") return null;
@@ -61,12 +82,38 @@ function writeSessionToUrl(uuid: string): void {
 }
 
 function BoardShell({ sessionUuid }: { sessionUuid: string }) {
+  const boardsRef = useRef<Record<string, BoardElement[]>>({});
+  const activeRef = useRef<string | null>(null);
+  const lastSentRef = useRef<Record<string, string>>({});
+  const checkTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Debounced: after the student stops drawing, render the active board and ask
+  // the backend for a look. Skips empty or unchanged boards.
+  const scheduleBoardCheck = useCallback(() => {
+    if (checkTimerRef.current) clearTimeout(checkTimerRef.current);
+    checkTimerRef.current = setTimeout(() => {
+      checkTimerRef.current = null;
+      const questionId = activeRef.current;
+      if (!questionId) return;
+      const els = boardsRef.current[questionId] ?? [];
+      if (els.length === 0) return;
+      const fingerprint = JSON.stringify(els);
+      if (lastSentRef.current[questionId] === fingerprint) return;
+      lastSentRef.current[questionId] = fingerprint;
+      const image = boardToJpegBase64(els);
+      if (!image) return;
+      void postBoardCheck(sessionUuid, { questionId, image }).catch(() => {});
+    }, BOARD_CHECK_DEBOUNCE_MS);
+  }, [sessionUuid]);
+
   const {
     questions,
+    boards,
     activeQuestionId,
     setActiveQuestionId,
     syncQuestions,
     deleteQuestion,
+    applyRemoteElement,
     goPrev,
     goNext,
     elements,
@@ -92,8 +139,39 @@ function BoardShell({ sessionUuid }: { sessionUuid: string }) {
     moveText,
     movePen,
     moveShape,
-  } = useMultiBoardSession();
+  } = useMultiBoardSession({ onChange: scheduleBoardCheck });
+
+  useEffect(() => {
+    boardsRef.current = boards;
+    activeRef.current = activeQuestionId;
+  }, [boards, activeQuestionId]);
+
   const [captureProcessing, setCaptureProcessing] = useState(false);
+  const [statuses, setStatuses] = useState<
+    Record<string, { status: AssessmentStatus; reasoning: string }>
+  >({});
+  const [hints, setHints] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    return () => {
+      if (checkTimerRef.current) clearTimeout(checkTimerRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    return subscribeBoardSuggestions(sessionUuid, {
+      onTick: (d) =>
+        setStatuses((prev) => ({
+          ...prev,
+          [d.questionId]: { status: d.status, reasoning: d.reasoning },
+        })),
+      onTutor: (d) =>
+        setHints((prev) => ({ ...prev, [d.questionId]: d.hint })),
+      onBoardElement: (d) => {
+        if (d.questionId) applyRemoteElement(d.questionId, d.element);
+      },
+    });
+  }, [sessionUuid, applyRemoteElement]);
 
   useEffect(() => {
     let timeout: ReturnType<typeof setTimeout> | undefined;
@@ -203,6 +281,21 @@ function BoardShell({ sessionUuid }: { sessionUuid: string }) {
           />
         </div>
       </BoardCarousel>
+      {activeQuestionId &&
+      (statuses[activeQuestionId] || hints[activeQuestionId]) ? (
+        <div className="board-suggestion-strip" role="status" aria-live="polite">
+          {statuses[activeQuestionId] ? (
+            <span
+              className={`board-status-badge is-${statuses[activeQuestionId].status}`}
+            >
+              {STATUS_LABEL[statuses[activeQuestionId].status]}
+            </span>
+          ) : null}
+          {hints[activeQuestionId] ? (
+            <p className="board-suggestion-hint">{hints[activeQuestionId]}</p>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }

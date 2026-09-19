@@ -289,6 +289,29 @@ describe("opencode-adapter/turn images", () => {
     const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
     expect(body.model).toBe("test-vision");
   });
+
+  it("uses the vision model for annotate and attaches the board image", async () => {
+    fetchMock.mockResolvedValueOnce(
+      completion({ annotations: [{ tool: "shape", shape: "ellipse", x: 1, y: 2, width: 3, height: 4 }] })
+    );
+    await adapter().annotate({ questionText: "x", board: [], image: IMG });
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    expect(body.model).toBe("test-vision");
+    expect(JSON.stringify(body.messages)).toContain("data:image/jpeg;base64,Zm9vYmFy");
+  });
+
+  it("passes the watch status through", async () => {
+    fetchMock.mockResolvedValueOnce(
+      completion({ flag: false, reasoning: "fine", status: "solid" })
+    );
+    const verdict = await adapter().watch({
+      captureHash: "h",
+      pageIndex: 0,
+      draftText: "x",
+      image: IMG,
+    });
+    expect(verdict.status).toBe("solid");
+  });
 });
 
 describe("opencode-adapter/scout + watch + idk", () => {

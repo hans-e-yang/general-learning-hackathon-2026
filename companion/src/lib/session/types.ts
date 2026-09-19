@@ -76,9 +76,12 @@ export interface TutorContextEntry extends ContextEntryBase {
 /** The live watcher ran on a capture; the verdict is recorded whether or not it flagged. */
 export interface WatchContextEntry extends ContextEntryBase {
   kind: "watch";
+  /** "document" = extension screenshot; "board" = the student's rendered canvas. */
+  source: "document" | "board";
   captureHash: string;
   pageIndex: number;
   verdict: WatchVerdict;
+  image?: string;
 }
 
 /** The student mutated the shared canvas. */

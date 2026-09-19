@@ -64,8 +64,18 @@ export const WatchVerdictSchema = z.object({
   severity: WatchSeveritySchema.optional(),
   ghostKey: z.string().optional(),
   reasoning: z.string().min(1),
+  /** Optional quality read of the visible work (board checks always tick this). */
+  status: AssessmentStatusSchema.optional(),
 });
 export type WatchVerdict = z.infer<typeof WatchVerdictSchema>;
+
+export const BoardCheckRequestSchema = z.object({
+  questionId: z.string(),
+  image: base64JpegSchema,
+  hash: hashSchema.optional(),
+  timestamp: z.number().int().positive().optional(),
+});
+export type BoardCheckRequest = z.infer<typeof BoardCheckRequestSchema>;
 
 export const BoardAuthorSchema = z.enum(["student", "tutor"]);
 export const ShapeKindSchema = z.enum(["rect", "ellipse", "line", "triangle"]);
@@ -300,7 +310,11 @@ export const SseEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("tutor.turn"), data: TutorTurnSchema }),
   z.object({
     type: z.literal("board.element"),
-    data: z.object({ element: BoardElementSchema }),
+    data: z.object({
+      element: BoardElementSchema,
+      /** Present on tutor marks from a board check, so the pane routes them. */
+      questionId: z.string().optional(),
+    }),
   }),
   z.object({
     type: z.literal("board.remove"),

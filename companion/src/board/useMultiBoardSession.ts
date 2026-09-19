@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
-import { applyBoardTurn } from "@/board/model";
+import { applyBoardElement, applyBoardTurn } from "@/board/model";
 import {
   ensureBoardSlots,
   neighborQuestionId,
@@ -10,6 +10,7 @@ import {
   type BoardSlotMap,
 } from "@/board/multiBoard";
 import { renderMathText } from "@/board/mathText";
+import { sortQuestionItems } from "@/lib/questionLabel";
 import type {
   BoardElement,
   BoardPoint,
@@ -33,6 +34,8 @@ function newId(prefix: string): string {
 
 export type UseMultiBoardSessionOptions = {
   onStrokeEnd?: (element: BoardElement) => void;
+  /** Fired after any local board mutation; drives the debounced board check. */
+  onChange?: () => void;
 };
 
 /**
@@ -41,6 +44,7 @@ export type UseMultiBoardSessionOptions = {
  */
 export function useMultiBoardSession({
   onStrokeEnd,
+  onChange,
 }: UseMultiBoardSessionOptions = {}) {
   const [questions, setQuestions] = useState<{ id: string; label: string }[]>(
     [],
@@ -85,7 +89,9 @@ export function useMultiBoardSession({
 
   const syncQuestions = useCallback(
     (qs: { id: string; label: string }[]) => {
-      const visible = qs.filter((q) => !deletedIdsRef.current.has(q.id));
+      const visible = sortQuestionItems(
+        qs.filter((q) => !deletedIdsRef.current.has(q.id)),
+      );
       setQuestions(visible.map((q) => ({ id: q.id, label: q.label })));
       setBoards((prev) => ensureBoardSlots(prev, visible));
       activateQuestion((prev) => pickActiveQuestionId(prev, visible));
@@ -126,8 +132,20 @@ export function useMultiBoardSession({
         const current = prev[activeQuestionId] ?? [];
         return { ...prev, [activeQuestionId]: updater(current) };
       });
+      onChange?.();
     },
-    [activeQuestionId],
+    [activeQuestionId, onChange],
+  );
+
+  /** Merge a tutor mark delivered by a board check into the matching board. */
+  const applyRemoteElement = useCallback(
+    (questionId: string, element: BoardElement) => {
+      setBoards((prev) => ({
+        ...prev,
+        [questionId]: applyBoardElement(prev[questionId] ?? [], element),
+      }));
+    },
+    [],
   );
 
   const commitTurn = useCallback(
@@ -293,6 +311,7 @@ export function useMultiBoardSession({
     setActiveQuestionId,
     syncQuestions,
     deleteQuestion,
+    applyRemoteElement,
     goPrev,
     goNext,
     elements,

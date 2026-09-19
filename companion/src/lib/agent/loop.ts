@@ -4,11 +4,16 @@ import type { BoardTurn } from "@/contracts/board";
 import {
   asBoardAnnotationTurn,
   asBoardTurn,
+  type BoardCheckRequest,
   type TurnRequest,
   type TriageVerdict,
   type WatchVerdict,
 } from "@/lib/contracts";
-import { normalizeQuestionLabel, composeQuestionLabels } from "@/lib/questionLabel";
+import {
+  normalizeQuestionLabel,
+  composeQuestionLabels,
+  compareQuestionLabels,
+} from "@/lib/questionLabel";
 import { publish } from "@/lib/session/bus";
 import { get, withLock } from "@/lib/session/store";
 import {
@@ -168,6 +173,7 @@ async function annotateBoard(
     hint?: string;
     message?: string;
     captureHash?: string;
+    image?: string;
   }
 ): Promise<void> {
   const { adapter, publishEvent } = depsOrDefault();
@@ -185,9 +191,108 @@ async function annotateBoard(
     state.board = applyBoardTurn(state.board, turn);
     const element = state.board[state.board.length - 1];
     if (state.board.length > before && element) {
-      publishEvent(uuid, { type: "board.element", data: { element } });
+      publishEvent(uuid, {
+        type: "board.element",
+        data: { element, questionId: ctx.questionId },
+      });
     }
   }
+}
+
+/**
+ * Shared tail for a `watch` verdict: count the ghost, publish `flag`, and (unless
+ * the ghost has gone silent) emit a tutor hint plus grounded board annotations.
+ */
+async function emitWatcherSuggestions(
+  state: SessionState,
+  uuid: string,
+  opts: {
+    questionId?: string;
+    questionText?: string;
+    draftText?: string;
+    captureHash: string;
+    source: "document" | "board";
+    image?: string;
+    verdict: WatchVerdict;
+  }
+): Promise<void> {
+  const { adapter, publishEvent } = depsOrDefault();
+  const { verdict, source, captureHash } = opts;
+  if (!verdict.flag) return;
+
+  const questionId = opts.questionId ?? "unknown";
+  const baseGhost = verdict.ghostKey ?? `g-${captureHash.slice(0, 6)}`;
+  // Namespace board ghosts so the document watcher's counts don't cross-talk.
+  const ghostKey = source === "board" ? `board:${baseGhost}` : baseGhost;
+  const now = Date.now();
+  const newCount = (state.ghostCounts[ghostKey] ?? 0) + 1;
+  state.ghostCounts[ghostKey] = newCount;
+  const silent = newCount > SILENT_THRESHOLD;
+
+  const existing = state.ghostSummary.find((g) => g.ghostKey === ghostKey);
+  const summaryEntry: GhostSummaryEntry = existing
+    ? { ...existing, occurrences: newCount, lastSeenAt: now, silent }
+    : {
+        ghostKey,
+        severity: verdict.severity ?? "low",
+        firstSeenAt: now,
+        lastSeenAt: now,
+        occurrences: newCount,
+        silent,
+      };
+  if (!existing) state.ghostSummary.push(summaryEntry);
+  else Object.assign(existing, summaryEntry);
+
+  publishEvent(uuid, {
+    type: "flag",
+    data: {
+      questionId,
+      severity: verdict.severity ?? "low",
+      ghostKey,
+      reasoning: verdict.reasoning,
+    },
+  });
+
+  if (silent || !opts.questionId || !opts.questionText) return;
+
+  const thread = state.threads[opts.questionId] ?? [];
+  const prevLevel = thread.length === 0 ? 0 : thread[thread.length - 1].level;
+  let prompt: PromptMessage[] = [];
+  const tutorTurn = await adapter.tutor({
+    questionId: opts.questionId,
+    questionText: opts.questionText,
+    draftText: opts.draftText,
+    threadHistory: thread,
+    currentLevel: prevLevel,
+    captureHash,
+    image: opts.image,
+    onPrompt: (messages) => {
+      prompt = messages;
+    },
+  });
+  recordContext(state, {
+    kind: "tutor",
+    questionId: opts.questionId,
+    prompt,
+    input: { kind: "watch", captureHash, pageIndex: 0 },
+    material: buildMaterial(state, {
+      questionId: opts.questionId,
+      captureHash,
+      image: opts.image,
+    }),
+    output: tutorTurn,
+  });
+  thread.push(tutorTurn);
+  state.threads[opts.questionId] = thread;
+  publishEvent(uuid, { type: "tutor.turn", data: tutorTurn });
+  await annotateBoard(state, uuid, {
+    questionId: opts.questionId,
+    questionText: opts.questionText,
+    draftText: opts.draftText,
+    hint: tutorTurn.hint,
+    captureHash,
+    image: opts.image,
+  });
 }
 
 function nextLevel(history: TutorTurn[], requestedLevel: number): number {
@@ -236,6 +341,14 @@ export async function extractFromCapture(
         inserted += 1;
       }
     }
+    // Keep the printed problem order (1 < 1a < 1b < 2 < 10) regardless of the
+    // order the model returned, so every consumer sees a stable sequence.
+    state.worksheet.sort((a, b) =>
+      compareQuestionLabels(a.label ?? String(a.index), b.label ?? String(b.index)),
+    );
+    state.worksheet.forEach((q, i) => {
+      q.index = i;
+    });
     const partial = inserted === 0 || state.captures.length > 1;
     recordContext(state, {
       kind: "extraction",
@@ -325,7 +438,7 @@ export async function watchOnCapture(
   await withLock(uuid, async () => {
     const state = get(uuid);
     if (!state) return;
-    const { adapter, publishEvent } = depsOrDefault();
+    const { adapter } = depsOrDefault();
     const q = state.worksheet[state.worksheet.length - 1];
     const draft = q ? state.drafts[q.id] : undefined;
     const input: WatchInput = {
@@ -338,79 +451,72 @@ export async function watchOnCapture(
     verdict = await adapter.watch(input);
     recordContext(state, {
       kind: "watch",
+      source: "document",
       questionId: q?.id,
       captureHash,
       pageIndex,
       verdict,
+      image,
     });
-    if (!verdict.flag) return;
-    const questionId = q?.id ?? "unknown";
-    const ghostKey = verdict.ghostKey ?? `g-${captureHash.slice(0, 6)}`;
-    const now = Date.now();
-    const newCount = (state.ghostCounts[ghostKey] ?? 0) + 1;
-    state.ghostCounts[ghostKey] = newCount;
-    const silent = newCount > SILENT_THRESHOLD;
-
-    const existing = state.ghostSummary.find((g) => g.ghostKey === ghostKey);
-    const summaryEntry: GhostSummaryEntry = existing
-      ? { ...existing, occurrences: newCount, lastSeenAt: now, silent }
-      : {
-          ghostKey,
-          severity: verdict.severity ?? "low",
-          firstSeenAt: now,
-          lastSeenAt: now,
-          occurrences: newCount,
-          silent,
-        };
-    if (!existing) state.ghostSummary.push(summaryEntry);
-    else Object.assign(existing, summaryEntry);
-
-    publishEvent(uuid, {
-      type: "flag",
-      data: {
-        questionId,
-        severity: verdict.severity ?? "low",
-        ghostKey,
-        reasoning: verdict.reasoning,
-      },
-    });
-
-    if (silent || !q) return;
-    const thread = state.threads[questionId] ?? [];
-    const prevLevel = thread.length === 0 ? 0 : thread[thread.length - 1].level;
-    let prompt: PromptMessage[] = [];
-    const tutorInput: TutorInput = {
-      questionId,
-      questionText: q.text,
+    await emitWatcherSuggestions(state, uuid, {
+      questionId: q?.id,
+      questionText: q?.text,
       draftText: draft,
-      threadHistory: thread,
-      currentLevel: prevLevel,
       captureHash,
-      onPrompt: (messages) => {
-        prompt = messages;
-      },
-    };
-    const tutorTurn = await adapter.tutor(tutorInput);
-    recordContext(state, {
-      kind: "tutor",
-      questionId,
-      prompt,
-      input: { kind: "watch", captureHash, pageIndex },
-      material: buildMaterial(state, { questionId, captureHash, pageIndex, image }),
-      output: tutorTurn,
-    });
-    thread.push(tutorTurn);
-    state.threads[questionId] = thread;
-    publishEvent(uuid, { type: "tutor.turn", data: tutorTurn });
-    await annotateBoard(state, uuid, {
-      questionId,
-      questionText: q.text,
-      draftText: draft,
-      hint: tutorTurn.hint,
-      captureHash,
+      source: "document",
+      image,
+      verdict,
     });
   });
   return verdict;
+}
+
+/**
+ * A board check: the pane rendered the active question's canvas and asked for a
+ * look. Always ticks a status; on a flag, emits the shared hint + circle tail.
+ */
+export async function checkBoard(uuid: string, req: BoardCheckRequest): Promise<void> {
+  await withLock(uuid, async () => {
+    const state = get(uuid);
+    if (!state) return;
+    const { adapter, publishEvent } = depsOrDefault();
+    const q = findQuestion(state, req.questionId);
+    const draft = state.drafts[req.questionId];
+    const captureHash = req.hash ?? `board-${req.questionId}`;
+    const verdict = await adapter.watch({
+      captureHash,
+      pageIndex: 0,
+      questionText: q?.text,
+      draftText: draft,
+      image: req.image,
+    });
+    recordContext(state, {
+      kind: "watch",
+      source: "board",
+      questionId: req.questionId,
+      captureHash,
+      pageIndex: 0,
+      verdict,
+      image: req.image,
+    });
+    publishEvent(uuid, {
+      type: "assessment.tick",
+      data: {
+        questionId: req.questionId,
+        status: verdict.status ?? (verdict.flag ? "blocked" : "on-track"),
+        reasoning: verdict.reasoning,
+      },
+    });
+    await emitWatcherSuggestions(state, uuid, {
+      questionId: req.questionId,
+      questionText: q?.text,
+      draftText: draft,
+      captureHash,
+      source: "board",
+      image: req.image,
+      verdict,
+    });
+  });
 }
 
 export async function assessDraft(

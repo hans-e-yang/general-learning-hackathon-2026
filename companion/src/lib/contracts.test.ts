@@ -3,12 +3,14 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import yaml from "js-yaml";
 import {
+  BoardCheckRequestSchema,
   MaterialCaptureSchema,
   ModeSchema,
   ScoutVerdictSchema,
   SseEventSchema,
   TriageVerdictSchema,
   TurnRequestSchema,
+  WatchVerdictSchema,
   parseMaterialCapture,
   safeParseSseEvent,
 } from "./contracts";
@@ -201,6 +203,32 @@ describe("contracts: board SSE events", () => {
     expect(safeParseSseEvent(ev).success).toBe(true);
   });
 
+  it("accepts a board.element event carrying a questionId", () => {
+    const ev = {
+      type: "board.element",
+      data: {
+        questionId: "q-p0-0",
+        element: {
+          id: "e2",
+          tool: "shape",
+          shape: "ellipse",
+          author: "tutor",
+          x: 10,
+          y: 20,
+          width: 30,
+          height: 40,
+          color: "#b85c38",
+          strokeWidth: 2.5,
+        },
+      },
+    };
+    const parsed = safeParseSseEvent(ev);
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data.type === "board.element" && parsed.data.data.questionId).toBe(
+      "q-p0-0"
+    );
+  });
+
   it("accepts a board.remove event", () => {
     expect(safeParseSseEvent({ type: "board.remove", data: { elementId: "e1" } }).success).toBe(
       true
@@ -209,6 +237,45 @@ describe("contracts: board SSE events", () => {
 
   it("rejects a board.element event without an element", () => {
     expect(safeParseSseEvent({ type: "board.element", data: {} }).success).toBe(false);
+  });
+});
+
+describe("contracts: BoardCheckRequest (#board-check)", () => {
+  it("accepts a question image with optional hash/timestamp", () => {
+    expect(
+      BoardCheckRequestSchema.safeParse({ questionId: "q-p0-0", image: FIXTURE_JPEG_B64 }).success
+    ).toBe(true);
+    expect(
+      BoardCheckRequestSchema.safeParse({
+        questionId: "q-p0-0",
+        image: FIXTURE_JPEG_B64,
+        hash: "feedfacec0ffee01",
+        timestamp: 1_700_000_000_000,
+      }).success
+    ).toBe(true);
+  });
+
+  it("rejects a non-JPEG board image", () => {
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).toString("base64");
+    expect(
+      BoardCheckRequestSchema.safeParse({ questionId: "q-p0-0", image: png }).success
+    ).toBe(false);
+  });
+
+  it("requires a questionId", () => {
+    expect(BoardCheckRequestSchema.safeParse({ image: FIXTURE_JPEG_B64 }).success).toBe(false);
+  });
+});
+
+describe("contracts: WatchVerdict.status (#board-check)", () => {
+  it("accepts an optional assessment status", () => {
+    expect(WatchVerdictSchema.safeParse({ flag: false, reasoning: "ok" }).success).toBe(true);
+    expect(
+      WatchVerdictSchema.safeParse({ flag: false, reasoning: "ok", status: "on-track" }).success
+    ).toBe(true);
+    expect(
+      WatchVerdictSchema.safeParse({ flag: true, reasoning: "x", status: "bogus" }).success
+    ).toBe(false);
   });
 });
 
@@ -310,12 +377,20 @@ describe("contracts: openapi.yaml", () => {
     { schema: yaml.JSON_SCHEMA }
   ) as Record<string, unknown>;
 
-  it("declares the four Lane B endpoints", () => {
+  it("declares the Lane B endpoints incl. the board check", () => {
     const paths = spec.paths as Record<string, unknown>;
     expect(paths).toHaveProperty("/session.post");
     expect(paths).toHaveProperty("/session/{uuid}/material.post");
     expect(paths).toHaveProperty("/session/{uuid}/events.get");
     expect(paths).toHaveProperty("/session/{uuid}/turn.post");
+    expect(paths).toHaveProperty("/session/{uuid}/board.post");
+  });
+
+  it("declares BoardCheckRequest and the WatchVerdict status", () => {
+    const schemas = (spec.components as { schemas: Record<string, unknown> }).schemas;
+    expect(schemas).toHaveProperty("BoardCheckRequest");
+    const watch = schemas.WatchVerdict as { properties: Record<string, unknown> };
+    expect(watch.properties).toHaveProperty("status");
   });
 
   it("declares every required SSE schema", () => {

@@ -215,7 +215,11 @@ export class FakeAdapter implements LLMAdapter {
     const hash = input.captureHash ?? "";
     const lastHex = hash.length > 0 ? parseInt(hash[hash.length - 1], 16) : 0;
     if (Number.isNaN(lastHex) || lastHex % 2 !== 0) {
-      return { flag: false, reasoning: "no detectable slip at this checkpoint" };
+      return {
+        flag: false,
+        reasoning: "no detectable slip at this checkpoint",
+        status: "on-track",
+      };
     }
     const severity: WatchSeverity = lastHex < 8 ? "high" : lastHex < 12 ? "medium" : "low";
     return {
@@ -223,6 +227,7 @@ export class FakeAdapter implements LLMAdapter {
       severity,
       ghostKey: `g-${hash.slice(0, 6)}`,
       reasoning: `deterministic watcher flagged hash ${hash.slice(0, 6)} (severity=${severity})`,
+      status: "blocked",
     };
   }
 
