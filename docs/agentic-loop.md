@@ -60,7 +60,7 @@ SessionState
   mode: 'assignment' | 'review'
   captures[]: { captureId, pageIndex, hash, timestamp, deduped }
   recentHashes: string[]   // rolling last 5, drives /material dedupe
-  worksheet[]: { id, index, text, status }
+  worksheet[]: { id, index, text, label, status }
   drafts: Record<questionId, string>
   threads: Record<questionId, TutorTurn[]>
   ghostCounts: Record<ghostKey, number>           // added in #23
@@ -78,7 +78,7 @@ a refresh.
 
 | Method | Role | Called from |
 | --- | --- | --- |
-| `extract({captureHash, pageIndex})` → `ExtractedQuestion[]` | Vision + structuring. Stable IDs `q-p<page>-<i>`. | `/material` after a non-deduped capture (#14). |
+| `extract({captureHash, pageIndex})` → `ExtractedQuestion[]` `{ id, index, text, label }` | Vision + structuring. Stable IDs `q-p<page>-<i>`. | `/material` after a non-deduped capture (#14). |
 | `scout({captureHash, pageIndex, draftText, questionText})` → `ScoutVerdict` | Cheap/fast quality assessment. | Material route + every `saveDraft` (#15). |
 | `tutor({questionId, questionText, draftText, message?, threadHistory, currentLevel, captureHash?})` → `TutorTurn` | Socratic turn. Hint level 0–3; never a final answer (#16). | `/turn requestCheck`, `/turn ask`, flag escalations from the watcher (#23). |
 | `watch({captureHash, pageIndex, questionText?, draftText?, recurrenceCount?})` → `WatchVerdict` | Live canvas watcher. Returns `{flag, severity?, ghostKey?, reasoning}` (#22). | `/material` after a non-deduped capture. |
