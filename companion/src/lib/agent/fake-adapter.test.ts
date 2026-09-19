@@ -12,10 +12,6 @@ describe("fake-adapter/extract", () => {
       expect(q.id.startsWith("q-p0-")).toBe(true);
       expect(q.text.length).toBeGreaterThan(0);
     }
-    const qs = await fakeAdapter.extract({ captureHash: "0123456789abcdef", pageIndex: 0 });
-    for (const q of qs) {
-      expect(q.label.length).toBeGreaterThan(0);
-    }
   });
 
   it("yields distinct questions across pages", async () => {
@@ -70,6 +66,42 @@ describe("fake-adapter/scout", () => {
     };
     const a = await fakeAdapter.scout(input);
     const b = await fakeAdapter.scout(input);
+    expect(a).toEqual(b);
+  });
+
+  it("sets escalate true unless the draft is solid (#29)", async () => {
+    const noAttempt = await fakeAdapter.scout({ captureHash: "h", pageIndex: 0 });
+    expect(noAttempt.status).toBe("blocked");
+    expect(noAttempt.escalate).toBe(true);
+
+    const reasoning = await fakeAdapter.scout({
+      captureHash: "h",
+      pageIndex: 0,
+      draftText:
+        "We know the function is increasing on the interval, therefore the upper bound is at x = 2, hence the integral converges.",
+    });
+    expect(reasoning.escalate).toBe(reasoning.status !== "solid");
+  });
+});
+
+describe("fake-adapter/triage (#28)", () => {
+  it("accepts an odd-hex capture as new context with a novelty tag", async () => {
+    const r = await fakeAdapter.triage({ captureHash: "feedfacec0ffee01", pageIndex: 0 });
+    expect(r.update).toBe(true);
+    expect(r.novelty).toBe("new-questions");
+    expect(r.reason.length).toBeGreaterThan(0);
+  });
+
+  it("rejects an even-hex capture as already-known context", async () => {
+    const r = await fakeAdapter.triage({ captureHash: "feedfacec0ffee0a", pageIndex: 0 });
+    expect(r.update).toBe(false);
+    expect(r.novelty).toBe("none");
+  });
+
+  it("is deterministic for the same capture", async () => {
+    const input = { captureHash: "deadbeefdeadbeef", pageIndex: 0, contextSummary: "questions=1" };
+    const a = await fakeAdapter.triage(input);
+    const b = await fakeAdapter.triage(input);
     expect(a).toEqual(b);
   });
 });
@@ -245,6 +277,29 @@ describe("fake-adapter/tutor", () => {
       draftText: "",
     });
     expect(t.hint).toContain("Why does sin(x)/x approach 1?");
+  });
+});
+
+describe("fake-adapter/annotate", () => {
+  it("returns a tutor-authored text mark for a scene", async () => {
+    const turns = await fakeAdapter.annotate({
+      questionId: "q1",
+      questionText: "Why does sin(x)/x approach 1?",
+      board: [],
+    });
+    expect(turns).toHaveLength(1);
+    expect(turns[0].kind).toBe("board-text");
+    expect(turns[0].element.author).toBe("tutor");
+  });
+
+  it("is deterministic for the same scene", async () => {
+    const a = await fakeAdapter.annotate({ questionId: "q1", hint: "h", board: [] });
+    const b = await fakeAdapter.annotate({ questionId: "q1", hint: "h", board: [] });
+    expect(a).toEqual(b);
+  });
+
+  it("returns no marks for an empty canvas with no question or hint", async () => {
+    expect(await fakeAdapter.annotate({ board: [] })).toEqual([]);
   });
 });
 

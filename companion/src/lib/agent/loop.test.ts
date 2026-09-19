@@ -3,12 +3,14 @@ import { clearForTests as clearBus, type BusEvent } from "@/lib/session/bus";
 import { clearForTests as clearStore, _seed, get } from "@/lib/session/store";
 import type { SessionState } from "@/lib/session/types";
 import { fakeAdapter } from "./fake-adapter";
+import type { LLMAdapter } from "./llm-adapter";
 import {
   assessAllDrafts,
   assessDraft,
   configureAgentLoop,
   extractFromCapture,
   processTurn,
+  triageOnCapture,
   watchOnCapture,
 } from "./loop";
 
@@ -31,6 +33,8 @@ function seedSession(uuid: string, partial: Partial<SessionState> = {}): Session
     worksheet: [],
     drafts: {},
     threads: {},
+    context: [],
+    board: [],
     ghostCounts: {},
     ghostSummary: [],
     exportReady: false,
@@ -38,6 +42,30 @@ function seedSession(uuid: string, partial: Partial<SessionState> = {}): Session
   };
   _seed(base);
   return base;
+}
+
+function stubAdapter(overrides: Partial<LLMAdapter> = {}): LLMAdapter {
+  return {
+    name: "stub",
+    extract: async () => [],
+    scout: async () => ({ status: "on-track", reasoning: "stub", escalate: true }),
+    triage: async () => ({ update: true, reason: "stub" }),
+    tutor: async (input) => ({
+      questionId: input.questionId,
+      hint: "stub hint",
+      level: 0,
+      escalation: "same",
+    }),
+    watch: async () => ({ flag: false, reasoning: "stub" }),
+    idk: async (input) => ({
+      questionId: input.questionId,
+      hint: "stub hint",
+      level: 0,
+      escalation: "same",
+    }),
+    annotate: async () => [],
+    ...overrides,
+  };
 }
 
 beforeEach(() => {
@@ -58,7 +86,7 @@ describe("agent/loop saveDraft + setMode", () => {
   it("saveDraft stores the draft under the questionId", async () => {
     const { publisher } = capture();
     configureAgentLoop({ adapter: fakeAdapter, publishEvent: publisher });
-    seedSession("u1", { worksheet: [{ id: "q1", index: 0, text: "x", label: "1", status: "blocked" }] });
+    seedSession("u1", { worksheet: [{ id: "q1", index: 0, text: "x", status: "blocked" }] });
     await processTurn("u1", { kind: "saveDraft", questionId: "q1", draft: "drafting..." });
     const state = get("u1");
     expect(state?.drafts.q1).toBe("drafting...");
@@ -68,7 +96,7 @@ describe("agent/loop saveDraft + setMode", () => {
     const { events, publisher } = capture();
     configureAgentLoop({ adapter: fakeAdapter, publishEvent: publisher });
     seedSession("u1", {
-      worksheet: [{ id: "q1", index: 0, text: "x", label: "1", status: "blocked" }],
+      worksheet: [{ id: "q1", index: 0, text: "x", status: "blocked" }],
       captures: [
         { captureId: "c1", pageIndex: 0, hash: "abcabcabcabcabca", timestamp: 1, deduped: false },
       ],
@@ -87,7 +115,7 @@ describe("agent/loop saveDraft + setMode", () => {
   it("saveDraft skips the Scout tick when the draft is empty", async () => {
     const { events, publisher } = capture();
     configureAgentLoop({ adapter: fakeAdapter, publishEvent: publisher });
-    seedSession("u1", { worksheet: [{ id: "q1", index: 0, text: "x", label: "1", status: "blocked" }] });
+    seedSession("u1", { worksheet: [{ id: "q1", index: 0, text: "x", status: "blocked" }] });
     await processTurn("u1", { kind: "saveDraft", questionId: "q1", draft: "" });
     expect(events.find((e) => e.evt.type === "assessment.tick")).toBeUndefined();
   });
@@ -98,7 +126,7 @@ describe("agent/loop requestCheck", () => {
     const { events, publisher } = capture();
     configureAgentLoop({ adapter: fakeAdapter, publishEvent: publisher });
     seedSession("u1", {
-      worksheet: [{ id: "q1", index: 0, text: "x", label: "1", status: "blocked" }],
+      worksheet: [{ id: "q1", index: 0, text: "x", status: "blocked" }],
       captures: [
         { captureId: "c1", pageIndex: 0, hash: "abcabcabcabcabca", timestamp: 1, deduped: false },
       ],
@@ -129,7 +157,7 @@ describe("agent/loop ask", () => {
     const { events, publisher } = capture();
     configureAgentLoop({ adapter: fakeAdapter, publishEvent: publisher });
     seedSession("u1", {
-      worksheet: [{ id: "q1", index: 0, text: "x", label: "1", status: "blocked" }],
+      worksheet: [{ id: "q1", index: 0, text: "x", status: "blocked" }],
       captures: [
         { captureId: "c1", pageIndex: 0, hash: "abcabcabcabcabca", timestamp: 1, deduped: false },
       ],
@@ -147,6 +175,152 @@ describe("agent/loop ask", () => {
   });
 });
 
+describe("agent/loop context memory", () => {
+  it("records the full prompt, user input, and AI output for an ask turn", async () => {
+    const { publisher } = capture();
+    configureAgentLoop({ adapter: fakeAdapter, publishEvent: publisher });
+    seedSession("u1", {
+      worksheet: [{ id: "q1", index: 0, text: "x", status: "blocked" }],
+      captures: [
+        {
+          captureId: "c1",
+          pageIndex: 0,
+          hash: "abcabcabcabcabca",
+          timestamp: 1,
+          deduped: false,
+          image: "data:image/jpeg;base64,AAAA",
+        },
+      ],
+    });
+
+    const turn = { kind: "ask" as const, questionId: "q1", message: "why?" };
+    await processTurn("u1", turn);
+
+    const state = get("u1")!;
+    expect(state.context).toHaveLength(1);
+    const [entry] = state.context;
+    expect(entry.input).toEqual({ kind: "turn", turn });
+    expect(entry.questionId).toBe("q1");
+    expect(entry.prompt.map((m) => m.role)).toEqual(["system", "user"]);
+    expect(entry.prompt[1].content).toContain("why?");
+    expect(entry.material.questionText).toBe("x");
+    expect(entry.material.captureId).toBe("c1");
+    expect(entry.material.captureHash).toBe("abcabcabcabcabca");
+    expect(entry.material.image).toBe("data:image/jpeg;base64,AAAA");
+    expect(entry.output).toEqual(state.threads.q1[0]);
+  });
+
+  it("does not record context for setMode or saveDraft", async () => {
+    const { publisher } = capture();
+    configureAgentLoop({ adapter: fakeAdapter, publishEvent: publisher });
+    seedSession("u1", {
+      worksheet: [{ id: "q1", index: 0, text: "x", status: "blocked" }],
+    });
+
+    await processTurn("u1", { kind: "setMode", mode: "review" });
+    await processTurn("u1", { kind: "saveDraft", questionId: "q1", draft: "hello" });
+
+    expect(get("u1")?.context).toHaveLength(0);
+  });
+
+  it("records a context entry for an idk turn", async () => {
+    const { publisher } = capture();
+    configureAgentLoop({ adapter: fakeAdapter, publishEvent: publisher });
+    seedSession("u1", {
+      worksheet: [{ id: "q1", index: 0, text: "x", status: "blocked" }],
+    });
+
+    await processTurn("u1", { kind: "idk", questionId: "q1" });
+
+    const state = get("u1")!;
+    expect(state.context).toHaveLength(1);
+    expect(state.context[0].output).toEqual(state.threads.q1[0]);
+  });
+});
+
+describe("agent/loop canvas", () => {
+  it("applies a student board-pen turn and publishes board.element", async () => {
+    const { events, publisher } = capture();
+    configureAgentLoop({ adapter: fakeAdapter, publishEvent: publisher });
+    seedSession("u1");
+
+    await processTurn("u1", {
+      kind: "board-pen",
+      element: {
+        id: "pen-1",
+        author: "student",
+        points: [
+          { x: 0, y: 0 },
+          { x: 5, y: 5 },
+        ],
+      },
+    });
+
+    const state = get("u1")!;
+    expect(state.board).toHaveLength(1);
+    expect(state.board[0]).toMatchObject({ id: "pen-1", tool: "pen", author: "student" });
+    const evt = events.find((e) => e.evt.type === "board.element");
+    expect(evt).toBeDefined();
+  });
+
+  it("removes an element on board-remove and mirrors board.remove", async () => {
+    const { events, publisher } = capture();
+    configureAgentLoop({ adapter: fakeAdapter, publishEvent: publisher });
+    seedSession("u1", {
+      board: [
+        {
+          id: "pen-1",
+          tool: "pen",
+          author: "student",
+          points: [{ x: 0, y: 0 }],
+          color: "#1a1a1a",
+          strokeWidth: 2,
+        },
+      ],
+    });
+
+    await processTurn("u1", { kind: "board-remove", elementId: "pen-1" });
+
+    expect(get("u1")!.board).toHaveLength(0);
+    const evt = events.find((e) => e.evt.type === "board.remove");
+    expect(evt?.evt.type === "board.remove" && evt.evt.data.elementId).toBe("pen-1");
+  });
+
+  it("appends a tutor annotation after a requestCheck", async () => {
+    const { events, publisher } = capture();
+    configureAgentLoop({ adapter: fakeAdapter, publishEvent: publisher });
+    seedSession("u1", {
+      worksheet: [{ id: "q1", index: 0, text: "x?", status: "blocked" }],
+    });
+
+    await processTurn("u1", { kind: "requestCheck", questionId: "q1" });
+
+    const state = get("u1")!;
+    expect(state.board.some((el) => el.author === "tutor")).toBe(true);
+    expect(events.some((e) => e.evt.type === "board.element")).toBe(true);
+  });
+
+  it("keeps the tutor turn when annotate throws", async () => {
+    const { events, publisher } = capture();
+    configureAgentLoop({
+      adapter: stubAdapter({
+        annotate: async () => {
+          throw new Error("annotation offline");
+        },
+      }),
+      publishEvent: publisher,
+    });
+    seedSession("u1", {
+      worksheet: [{ id: "q1", index: 0, text: "x?", status: "blocked" }],
+    });
+
+    await processTurn("u1", { kind: "requestCheck", questionId: "q1" });
+
+    expect(events.some((e) => e.evt.type === "tutor.turn")).toBe(true);
+    expect(get("u1")!.board).toHaveLength(0);
+  });
+});
+
 describe("agent/loop extract (#14)", () => {
   it("populates the worksheet from a fresh capture and emits extraction.update", async () => {
     const { events, publisher } = capture();
@@ -158,8 +332,6 @@ describe("agent/loop extract (#14)", () => {
     for (const q of state!.worksheet) {
       expect(q.status).toBe("blocked");
       expect(q.id).toMatch(/^q-p0-/);
-      expect(q.label).toBeTruthy();
-      expect(typeof q.label).toBe("string");
     }
     const upd = events.find((e) => e.evt.type === "extraction.update");
     expect(upd).toBeDefined();
@@ -196,7 +368,7 @@ describe("agent/loop continuous Scout (#15)", () => {
     const { events, publisher } = capture();
     configureAgentLoop({ adapter: fakeAdapter, publishEvent: publisher });
     seedSession("u1", {
-      worksheet: [{ id: "q1", index: 0, text: "x", label: "1", status: "blocked" }],
+      worksheet: [{ id: "q1", index: 0, text: "x", status: "blocked" }],
       drafts: { q1: "yes because of small-angle approximation" },
       captures: [
         { captureId: "c1", pageIndex: 0, hash: "abcabcabcabcabca", timestamp: 1, deduped: false },
@@ -212,9 +384,9 @@ describe("agent/loop continuous Scout (#15)", () => {
     configureAgentLoop({ adapter: fakeAdapter, publishEvent: publisher });
     seedSession("u1", {
       worksheet: [
-        { id: "q1", index: 0, text: "x", label: "1", status: "blocked" },
-        { id: "q2", index: 1, text: "y", label: "2", status: "blocked" },
-        { id: "q3", index: 2, text: "z", label: "3", status: "blocked" },
+        { id: "q1", index: 0, text: "x", status: "blocked" },
+        { id: "q2", index: 1, text: "y", status: "blocked" },
+        { id: "q3", index: 2, text: "z", status: "blocked" },
       ],
       drafts: { q1: "a", q2: "b because", q3: "" },
       captures: [
@@ -236,7 +408,7 @@ describe("agent/loop Socratic thread (#16)", () => {
     const { events, publisher } = capture();
     configureAgentLoop({ adapter: fakeAdapter, publishEvent: publisher });
     seedSession("u1", {
-      worksheet: [{ id: "q1", index: 0, text: "x", label: "1", status: "blocked" }],
+      worksheet: [{ id: "q1", index: 0, text: "x", status: "blocked" }],
       captures: [
         { captureId: "c1", pageIndex: 0, hash: "abcabcabcabcabca", timestamp: 1, deduped: false },
       ],
@@ -263,7 +435,7 @@ describe("agent/loop Socratic thread (#16)", () => {
     const { events, publisher } = capture();
     configureAgentLoop({ adapter: fakeAdapter, publishEvent: publisher });
     seedSession("u1", {
-      worksheet: [{ id: "q1", index: 0, text: "x", label: "1", status: "blocked" }],
+      worksheet: [{ id: "q1", index: 0, text: "x", status: "blocked" }],
       captures: [
         { captureId: "c1", pageIndex: 0, hash: "abcabcabcabcabca", timestamp: 1, deduped: false },
       ],
@@ -288,8 +460,8 @@ describe("agent/loop Socratic thread (#16)", () => {
     configureAgentLoop({ adapter: fakeAdapter, publishEvent: publisher });
     seedSession("u1", {
       worksheet: [
-        { id: "q1", index: 0, text: "x", label: "1", status: "blocked" },
-        { id: "q2", index: 1, text: "y", label: "2", status: "blocked" },
+        { id: "q1", index: 0, text: "x", status: "blocked" },
+        { id: "q2", index: 1, text: "y", status: "blocked" },
       ],
     });
     await processTurn("u1", { kind: "requestCheck", questionId: "q1" });
@@ -309,7 +481,7 @@ describe("agent/loop watcher (#22)", () => {
       captures: [
         { captureId: "c1", pageIndex: 0, hash: "feedfacec0ffee0e", timestamp: 1, deduped: false },
       ],
-      worksheet: [{ id: "q-p0-0", index: 0, text: "Continuity?", label: "1", status: "blocked" }],
+      worksheet: [{ id: "q-p0-0", index: 0, text: "Continuity?", status: "blocked" }],
     });
     const verdict = await watchOnCapture("u1", "feedfacec0ffee0e", 0);
     expect(verdict?.flag).toBe(true);
@@ -328,7 +500,7 @@ describe("agent/loop watcher (#22)", () => {
       captures: [
         { captureId: "c1", pageIndex: 0, hash: "1234567890abcdef", timestamp: 1, deduped: false },
       ],
-      worksheet: [{ id: "q-p0-0", index: 0, text: "Continuity?", label: "1", status: "blocked" }],
+      worksheet: [{ id: "q-p0-0", index: 0, text: "Continuity?", status: "blocked" }],
     });
     const verdict = await watchOnCapture("u1", "1234567890abcdef", 0);
     expect(verdict?.flag).toBe(false);
@@ -343,7 +515,7 @@ describe("agent/loop watcher (#22)", () => {
         { captureId: "c1", pageIndex: 0, hash: "feedfacec0ffee0e", timestamp: 1, deduped: false },
         { captureId: "c1", pageIndex: 0, hash: "feedfacec0ffee0e", timestamp: 2, deduped: true },
       ],
-      worksheet: [{ id: "q-p0-0", index: 0, text: "x", label: "1", status: "blocked" }],
+      worksheet: [{ id: "q-p0-0", index: 0, text: "x", status: "blocked" }],
     });
     await watchOnCapture("u1", "feedfacec0ffee0e", 0);
     await watchOnCapture("u1", "feedfacec0ffee0e", 0);
@@ -360,7 +532,7 @@ describe("agent/loop intervention ladder (#23)", () => {
       captures: [
         { captureId: "c1", pageIndex: 0, hash: "feedfacec0ffee0e", timestamp: 1, deduped: false },
       ],
-      worksheet: [{ id: "q-p0-0", index: 0, text: "Continuity?", label: "1", status: "blocked" }],
+      worksheet: [{ id: "q-p0-0", index: 0, text: "Continuity?", status: "blocked" }],
     });
 
     const HASH = "feedfacec0ffee0e";
@@ -381,7 +553,7 @@ describe("agent/loop intervention ladder (#23)", () => {
       captures: [
         { captureId: "c1", pageIndex: 0, hash: "0000000000000000", timestamp: 1, deduped: false },
       ],
-      worksheet: [{ id: "q-p0-0", index: 0, text: "x", label: "1", status: "blocked" }],
+      worksheet: [{ id: "q-p0-0", index: 0, text: "x", status: "blocked" }],
     });
 
     await watchOnCapture("u1", "0000000000000000", 0);
@@ -410,7 +582,7 @@ describe("agent/loop intervention ladder (#23)", () => {
       captures: [
         { captureId: "c1", pageIndex: 0, hash: "feedfacec0ffee0e", timestamp: 1, deduped: false },
       ],
-      worksheet: [{ id: "q-p0-0", index: 0, text: "x", label: "1", status: "blocked" }],
+      worksheet: [{ id: "q-p0-0", index: 0, text: "x", status: "blocked" }],
     });
 
     const HASH = "feedfacec0ffee0e";
@@ -434,7 +606,7 @@ describe("agent/loop IDK (#23)", () => {
     configureAgentLoop({ adapter: fakeAdapter, publishEvent: publisher });
     seedSession("u1", {
       worksheet: [
-        { id: "q-p0-0", index: 0, text: "Why does sin(x)/x approach 1?", label: "1", status: "blocked" },
+        { id: "q-p0-0", index: 0, text: "Why does sin(x)/x approach 1?", status: "blocked" },
       ],
     });
     await processTurn("u1", { kind: "idk", questionId: "q-p0-0" });
@@ -450,7 +622,7 @@ describe("agent/loop IDK (#23)", () => {
     configureAgentLoop({ adapter: fakeAdapter, publishEvent: publisher });
     seedSession("u1", {
       worksheet: [
-        { id: "q-p0-0", index: 0, text: "What is the answer to everything?", label: "1", status: "blocked" },
+        { id: "q-p0-0", index: 0, text: "What is the answer to everything?", status: "blocked" },
       ],
     });
     await processTurn("u1", { kind: "idk", questionId: "q-p0-0" });
@@ -462,12 +634,149 @@ describe("agent/loop IDK (#23)", () => {
   });
 });
 
+describe("agent/loop capture triage (#28)", () => {
+  it("publishes capture.triaged and returns the verdict for a new frame", async () => {
+    const { events, publisher } = capture();
+    configureAgentLoop({ adapter: fakeAdapter, publishEvent: publisher });
+    seedSession("u1");
+    const update = await triageOnCapture("u1", "cap-1", "feedfacec0ffee01", 0);
+    expect(update).toBe(true);
+    const evt = events.find((e) => e.evt.type === "capture.triaged");
+    expect(evt).toBeDefined();
+    const data = evt!.evt.type === "capture.triaged" ? evt!.evt.data : null;
+    expect(data?.captureId).toBe("cap-1");
+    expect(data?.update).toBe(true);
+    expect(data?.novelty).toBe("new-questions");
+  });
+
+  it("returns false for a redundant frame", async () => {
+    const { events, publisher } = capture();
+    configureAgentLoop({ adapter: fakeAdapter, publishEvent: publisher });
+    seedSession("u1", {
+      worksheet: [{ id: "q1", index: 0, text: "x", status: "blocked" }],
+      captures: [
+        { captureId: "c1", pageIndex: 0, hash: "feedfacec0ffee01", timestamp: 1, deduped: false },
+      ],
+    });
+    const update = await triageOnCapture("u1", "cap-2", "feedfacec0ffee0a", 0);
+    expect(update).toBe(false);
+    const evt = events.find((e) => e.evt.type === "capture.triaged")!;
+    const data = evt.evt.type === "capture.triaged" ? evt.evt.data : null;
+    expect(data?.update).toBe(false);
+    expect(data?.novelty).toBe("none");
+  });
+
+  it("fails open (accepts the update) when the triage adapter throws", async () => {
+    const { events, publisher } = capture();
+    const adapter = stubAdapter({
+      triage: async () => {
+        throw new Error("boom");
+      },
+    });
+    configureAgentLoop({ adapter, publishEvent: publisher });
+    seedSession("u1");
+    const update = await triageOnCapture("u1", "cap-3", "feedfacec0ffee01", 0);
+    expect(update).toBe(true);
+    const evt = events.find((e) => e.evt.type === "capture.triaged")!;
+    expect(evt.evt.type === "capture.triaged" && evt.evt.data.update).toBe(true);
+  });
+});
+
+describe("agent/loop assess turn (#29)", () => {
+  it("publishes a tick and escalates to a tutor.turn when Scout says so", async () => {
+    const { events, publisher } = capture();
+    let tutorCalls = 0;
+    const adapter = stubAdapter({
+      scout: async () => ({ status: "on-track", reasoning: "needs a nudge", escalate: true }),
+      tutor: async (input) => {
+        tutorCalls += 1;
+        return { questionId: input.questionId, hint: "stub hint", level: 1, escalation: "up" };
+      },
+    });
+    configureAgentLoop({ adapter, publishEvent: publisher });
+    seedSession("u1", {
+      worksheet: [{ id: "q1", index: 0, text: "x", status: "blocked" }],
+      drafts: { q1: "partial attempt" },
+    });
+    await processTurn("u1", { kind: "assess", questionId: "q1" });
+    const types = events.map((e) => e.evt.type);
+    expect(types).toContain("assessment.tick");
+    expect(types).toContain("tutor.turn");
+    expect(types.indexOf("assessment.tick")).toBeLessThan(types.indexOf("tutor.turn"));
+    expect(tutorCalls).toBe(1);
+    expect(get("u1")?.threads.q1.length).toBe(1);
+  });
+
+  it("does not escalate when Scout returns solid", async () => {
+    const { events, publisher } = capture();
+    let tutorCalls = 0;
+    const adapter = stubAdapter({
+      scout: async () => ({ status: "solid", reasoning: "sound", escalate: false }),
+      tutor: async (input) => {
+        tutorCalls += 1;
+        return { questionId: input.questionId, hint: "stub", level: 0, escalation: "same" };
+      },
+    });
+    configureAgentLoop({ adapter, publishEvent: publisher });
+    seedSession("u1", {
+      worksheet: [{ id: "q1", index: 0, text: "x", status: "solid" }],
+      drafts: { q1: "by definition, therefore, hence" },
+    });
+    await processTurn("u1", { kind: "assess", questionId: "q1" });
+    const types = events.map((e) => e.evt.type);
+    expect(types).toContain("assessment.tick");
+    expect(types).not.toContain("tutor.turn");
+    expect(tutorCalls).toBe(0);
+  });
+
+  it("stays silent at the top of the hint ladder", async () => {
+    const { events, publisher } = capture();
+    let tutorCalls = 0;
+    const adapter = stubAdapter({
+      scout: async () => ({ status: "blocked", reasoning: "stuck", escalate: true }),
+      tutor: async (input) => {
+        tutorCalls += 1;
+        return { questionId: input.questionId, hint: "stub", level: 3, escalation: "same" };
+      },
+    });
+    configureAgentLoop({ adapter, publishEvent: publisher });
+    seedSession("u1", {
+      worksheet: [{ id: "q1", index: 0, text: "x", status: "blocked" }],
+      drafts: { q1: "stuck" },
+      threads: { q1: [{ questionId: "q1", hint: "prior", level: 3, escalation: "up" }] },
+    });
+    await processTurn("u1", { kind: "assess", questionId: "q1" });
+    const types = events.map((e) => e.evt.type);
+    expect(types).toContain("assessment.tick");
+    expect(types).not.toContain("tutor.turn");
+    expect(tutorCalls).toBe(0);
+  });
+
+  it("saveDraft keeps ticking without escalating (#29)", async () => {
+    const { events, publisher } = capture();
+    const adapter = stubAdapter({
+      scout: async () => ({ status: "on-track", reasoning: "needs a nudge", escalate: true }),
+    });
+    configureAgentLoop({ adapter, publishEvent: publisher });
+    seedSession("u1", {
+      worksheet: [{ id: "q1", index: 0, text: "x", status: "blocked" }],
+      captures: [
+        { captureId: "c1", pageIndex: 0, hash: "abcabcabcabcabca", timestamp: 1, deduped: false },
+      ],
+    });
+    await processTurn("u1", { kind: "saveDraft", questionId: "q1", draft: "partial attempt" });
+    const types = events.map((e) => e.evt.type);
+    expect(types).toContain("assessment.tick");
+    expect(types).not.toContain("tutor.turn");
+  });
+});
+
 describe("agent/loop lazy boot", () => {
   it("configures the loop with the configured adapter when processTurn is called", async () => {
     const { events, publisher } = capture();
     configureAgentLoop({ adapter: fakeAdapter, publishEvent: publisher });
     seedSession("u1", {
-      worksheet: [{ id: "q1", index: 0, text: "x", label: "1", status: "blocked" }],
+      worksheet: [{ id: "q1", index: 0, text: "x", status: "blocked" }],
       captures: [
         { captureId: "c1", pageIndex: 0, hash: "abcabcabcabcabca", timestamp: 1, deduped: false },
       ],

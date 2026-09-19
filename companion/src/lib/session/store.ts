@@ -18,6 +18,8 @@ export function freshSession(uuid: string, now: number = Date.now()): SessionSta
     worksheet: [],
     drafts: {},
     threads: {},
+    context: [],
+    board: [],
     ghostCounts: {},
     ghostSummary: [],
     exportReady: false,
@@ -67,14 +69,15 @@ export function recordCapture(
   uuid: string,
   hash: string,
   pageIndex: number,
-  timestamp: number
+  timestamp: number,
+  image?: string
 ): RecordCaptureResult {
   const s = getOrCreate(uuid);
   if (s.recentHashes.includes(hash)) {
     return { captureId: "", deduped: true };
   }
   const captureId = randomUUID();
-  s.captures.push({ captureId, pageIndex, hash, timestamp, deduped: false });
+  s.captures.push({ captureId, pageIndex, hash, timestamp, deduped: false, image });
   s.recentHashes.push(hash);
   if (s.recentHashes.length > RECENT_HASH_LIMIT) {
     s.recentHashes.shift();

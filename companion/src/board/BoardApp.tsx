@@ -7,6 +7,7 @@ import { BoardSurface } from "@/board/BoardSurface";
 import { BoardToolbar } from "@/board/BoardToolbar";
 import { neighborQuestionId } from "@/board/multiBoard";
 import { useMultiBoardSession } from "@/board/useMultiBoardSession";
+import { normalizeQuestionLabel } from "@/lib/questionLabel";
 import { subscribeWorksheet } from "@/session/worksheetChannel";
 
 const SESSION_KEY = "circlr-session-uuid";
@@ -68,7 +69,15 @@ function BoardShell({ sessionUuid }: { sessionUuid: string }) {
   } = useMultiBoardSession();
 
   useEffect(() => {
-    return subscribeWorksheet(sessionUuid, syncQuestions);
+    return subscribeWorksheet(sessionUuid, (qs) => {
+      // Soft titles are UI-derived until extract returns printed labels again.
+      syncQuestions(
+        qs.map((q) => ({
+          id: q.id,
+          label: normalizeQuestionLabel(undefined, q.index),
+        })),
+      );
+    });
   }, [sessionUuid, syncQuestions]);
 
   const activeLabel =

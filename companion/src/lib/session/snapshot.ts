@@ -12,6 +12,7 @@ export function buildSnapshot(s: SessionState): SessionSnapshot {
     })),
     worksheet: s.worksheet,
     drafts: { ...s.drafts },
+    board: s.board.map((el) => ({ ...el })),
     ghostSummary: s.ghostSummary.map((g) => ({ ...g })),
     exportReady: s.exportReady,
   };

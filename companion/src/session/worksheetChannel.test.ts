@@ -7,23 +7,25 @@ describe("questionsFromSsePayload", () => {
       uuid: "11111111-1111-4111-8111-111111111111",
       captures: [],
       worksheet: [
-        { id: "q-p0-0", index: 0, text: "x", label: "1a", status: "blocked" },
+        { id: "q-p0-0", index: 0, text: "x", status: "blocked" },
       ],
       drafts: {},
       ghostSummary: [],
       exportReady: false,
     });
-    expect(qs?.[0]?.label).toBe("1a");
+    expect(qs?.[0]?.id).toBe("q-p0-0");
+    expect(qs?.[0]?.index).toBe(0);
   });
 
   it("reads questions from extraction.update", () => {
     const qs = questionsFromSsePayload("extraction.update", {
       partial: false,
       questions: [
-        { id: "q-p0-0", index: 0, text: "x", label: "1b", status: "blocked" },
+        { id: "q-p0-0", index: 0, text: "x", status: "blocked" },
       ],
     });
-    expect(qs?.[0]?.label).toBe("1b");
+    expect(qs?.[0]?.id).toBe("q-p0-0");
+    expect(qs?.[0]?.text).toBe("x");
   });
 
   it("returns null for unrelated events", () => {

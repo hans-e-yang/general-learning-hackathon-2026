@@ -5,7 +5,9 @@ import yaml from "js-yaml";
 import {
   MaterialCaptureSchema,
   ModeSchema,
+  ScoutVerdictSchema,
   SseEventSchema,
+  TriageVerdictSchema,
   TurnRequestSchema,
   parseMaterialCapture,
   safeParseSseEvent,
@@ -95,8 +97,110 @@ describe("contracts: TurnRequest", () => {
     ).toBe(true);
   });
 
+  it("accepts assess (#29)", () => {
+    expect(TurnRequestSchema.safeParse({ kind: "assess", questionId: "q1" }).success).toBe(
+      true
+    );
+  });
+
   it("rejects an unknown kind", () => {
     expect(TurnRequestSchema.safeParse({ kind: "nope" }).success).toBe(false);
+  });
+});
+
+describe("contracts: board turns", () => {
+  it("accepts a board-pen turn (color/strokeWidth optional)", () => {
+    const r = TurnRequestSchema.safeParse({
+      kind: "board-pen",
+      element: {
+        id: "pen-1",
+        author: "student",
+        points: [
+          { x: 0, y: 0 },
+          { x: 4, y: 4 },
+        ],
+      },
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it("accepts a board-remove turn", () => {
+    expect(TurnRequestSchema.safeParse({ kind: "board-remove", elementId: "pen-1" }).success).toBe(
+      true
+    );
+  });
+
+  it("rejects a board-shape turn missing its dimensions", () => {
+    const r = TurnRequestSchema.safeParse({
+      kind: "board-shape",
+      element: { id: "s1", author: "student", shape: "rect", x: 0, y: 0 },
+    });
+    expect(r.success).toBe(false);
+  });
+
+  it("rejects an unknown board author", () => {
+    const r = TurnRequestSchema.safeParse({
+      kind: "board-pen",
+      element: { id: "p", author: "robot", points: [{ x: 0, y: 0 }] },
+    });
+    expect(r.success).toBe(false);
+  });
+});
+
+describe("contracts: board SSE events", () => {
+  it("accepts a board.element event", () => {
+    const ev = {
+      type: "board.element",
+      data: {
+        element: {
+          id: "e1",
+          tool: "text",
+          author: "tutor",
+          x: 0,
+          y: 0,
+          source: "look here",
+          color: "#b85c38",
+          width: 180,
+          fontSize: 16,
+        },
+      },
+    };
+    expect(safeParseSseEvent(ev).success).toBe(true);
+  });
+
+  it("accepts a board.remove event", () => {
+    expect(safeParseSseEvent({ type: "board.remove", data: { elementId: "e1" } }).success).toBe(
+      true
+    );
+  });
+
+  it("rejects a board.element event without an element", () => {
+    expect(safeParseSseEvent({ type: "board.element", data: {} }).success).toBe(false);
+  });
+});
+
+describe("contracts: ScoutVerdict", () => {
+  it("requires the escalate gate", () => {
+    expect(
+      ScoutVerdictSchema.safeParse({ status: "on-track", reasoning: "x", escalate: true }).success
+    ).toBe(true);
+    expect(ScoutVerdictSchema.safeParse({ status: "on-track", reasoning: "x" }).success).toBe(
+      false
+    );
+  });
+});
+
+describe("contracts: TriageVerdict (#28)", () => {
+  it("accepts update/reason with an optional novelty", () => {
+    expect(TriageVerdictSchema.safeParse({ update: true, reason: "new" }).success).toBe(true);
+    expect(
+      TriageVerdictSchema.safeParse({ update: false, reason: "seen", novelty: "none" }).success
+    ).toBe(true);
+  });
+
+  it("rejects a verdict without update or reason", () => {
+    expect(TriageVerdictSchema.safeParse({ novelty: "none" }).success).toBe(false);
+    expect(TriageVerdictSchema.safeParse({ update: true }).success).toBe(false);
   });
 });
 
@@ -140,32 +244,22 @@ describe("contracts: SSE events", () => {
     expect(safeParseSseEvent(ev).success).toBe(false);
   });
 
-  it("rejects an unknown event type", () => {
-    expect(safeParseSseEvent({ type: "mystery", data: {} }).success).toBe(false);
-  });
-
-  it("requires label on QuestionBlock inside extraction.update", () => {
+  it("accepts a capture.triaged event (#28)", () => {
     const ev = {
-      type: "extraction.update",
-      data: {
-        partial: false,
-        questions: [{ id: "q-p0-0", index: 0, text: "Define f?", status: "blocked" }],
-      },
-    };
-    expect(safeParseSseEvent(ev).success).toBe(false);
-  });
-
-  it("accepts extraction.update with labels", () => {
-    const ev = {
-      type: "extraction.update",
-      data: {
-        partial: false,
-        questions: [
-          { id: "q-p0-0", index: 0, text: "Define f?", status: "blocked", label: "1a" },
-        ],
-      },
+      type: "capture.triaged",
+      data: { captureId: "c1", update: false, reason: "already known", novelty: "none" },
     };
     expect(safeParseSseEvent(ev).success).toBe(true);
+  });
+
+  it("rejects a capture.triaged event without update/reason", () => {
+    expect(
+      safeParseSseEvent({ type: "capture.triaged", data: { captureId: "c1" } }).success
+    ).toBe(false);
+  });
+
+  it("rejects an unknown event type", () => {
+    expect(safeParseSseEvent({ type: "mystery", data: {} }).success).toBe(false);
   });
 });
 
@@ -196,13 +290,45 @@ describe("contracts: openapi.yaml", () => {
     for (const name of [
       "SnapshotEvent",
       "MaterialAcceptedEvent",
+      "CaptureTriagedEvent",
       "ExtractionUpdateEvent",
       "AssessmentTickEvent",
       "TutorTurnEvent",
+      "BoardElementEvent",
+      "BoardRemoveEvent",
+      "BoardTextMoveEvent",
+      "BoardPenMoveEvent",
+      "BoardShapeMoveEvent",
+      "BoardElement",
       "ErrorEvent",
     ]) {
       expect(schemas).toHaveProperty(name);
     }
+  });
+
+  it("declares the assess turn and the capture.triaged mapping", () => {
+    const schemas = (spec.components as { schemas: Record<string, unknown> }).schemas;
+    expect(schemas).toHaveProperty("AssessTurn");
+    const sse = schemas.SseEvent as {
+      discriminator: { mapping: Record<string, string> };
+    };
+    expect(sse.discriminator.mapping["capture.triaged"]).toBe(
+      "#/components/schemas/CaptureTriagedEvent"
+    );
+    const turn = spec.paths as { "/session/{uuid}/turn": { post: unknown } };
+    expect(turn["/session/{uuid}/turn"].post).toBeDefined();
+  });
+
+  it("declares the board turns and the board.element mapping", () => {
+    const schemas = (spec.components as { schemas: Record<string, unknown> }).schemas;
+    expect(schemas).toHaveProperty("BoardPenTurn");
+    expect(schemas).toHaveProperty("BoardShapeMoveTurn");
+    const sse = schemas.SseEvent as {
+      discriminator: { mapping: Record<string, string> };
+    };
+    expect(sse.discriminator.mapping["board.element"]).toBe(
+      "#/components/schemas/BoardElementEvent"
+    );
   });
 
   it("never advertises a final-answer field on TutorTurn", () => {

@@ -60,9 +60,10 @@ SessionState
   mode: 'assignment' | 'review'
   captures[]: { captureId, pageIndex, hash, timestamp, deduped }
   recentHashes: string[]   // rolling last 5, drives /material dedupe
-  worksheet[]: { id, index, text, label, status }
+  worksheet[]: { id, index, text, status }
   drafts: Record<questionId, string>
   threads: Record<questionId, TutorTurn[]>
+  board[]: BoardElement                            // shared canvas, student + tutor marks
   ghostCounts: Record<ghostKey, number>           // added in #23
   ghostSummary[]: { ghostKey, severity, firstSeenAt, lastSeenAt, occurrences, silent }  // #23
   exportReady: boolean
@@ -78,11 +79,13 @@ a refresh.
 
 | Method | Role | Called from |
 | --- | --- | --- |
-| `extract({captureHash, pageIndex})` → `ExtractedQuestion[]` `{ id, index, text, label }` | Vision + structuring. Stable IDs `q-p<page>-<i>`. | `/material` after a non-deduped capture (#14). |
-| `scout({captureHash, pageIndex, draftText, questionText})` → `ScoutVerdict` | Cheap/fast quality assessment. | Material route + every `saveDraft` (#15). |
+| `extract({captureHash, pageIndex})` → `ExtractedQuestion[]` | Vision + structuring. Stable IDs `q-p<page>-<i>`. | `/material` after a non-deduped capture (#14). |
+| `scout({captureHash, pageIndex, draftText, questionText})` → `ScoutVerdict` | Cheap/fast quality assessment. `escalate` says whether the Tutor should speak (#29). | Material route + every `saveDraft` (#15); `/turn kind:"assess"` (#29). |
 | `tutor({questionId, questionText, draftText, message?, threadHistory, currentLevel, captureHash?})` → `TutorTurn` | Socratic turn. Hint level 0–3; never a final answer (#16). | `/turn requestCheck`, `/turn ask`, flag escalations from the watcher (#23). |
 | `watch({captureHash, pageIndex, questionText?, draftText?, recurrenceCount?})` → `WatchVerdict` | Live canvas watcher. Returns `{flag, severity?, ghostKey?, reasoning}` (#22). | `/material` after a non-deduped capture. |
 | `idk({questionId, questionText, draftText?})` → `TutorTurn` | Smallest-unblock escape hatch (#23). Level 0; never a final answer. | `/turn idk`. |
+| `triage({captureHash, pageIndex, image, contextSummary})` → `TriageVerdict` | Small vision gate: does this capture carry information the session context does not already hold? | `/material`, before `extract` (#28). |
+| `annotate({questionId?, questionText?, draftText?, hint?, message?, captureHash?, board})` → `BoardAnnotationTurn[]` | Additive Tutor marks on the shared canvas: text, shapes (circle/arrow/line), pen strokes. Never erase/remove/move student work; never a final answer. | Loop, after every `tutor`/`idk` turn (`requestCheck`, `ask`, `assess`, `idk`, watcher escalation). |
 
 `FakeAdapter` is the default (`CIRCLR_LLM=fake`). All 110 tests run against it
 without network calls or vendor keys per the spec's test discipline.
@@ -106,8 +109,8 @@ capture JPEG via the `image` field on `ExtractInput`/`WatchInput` (threaded from
 | `POST /session` | mints uuid, returns `{uuid, eventsUrl}` | #11 |
 | `GET /session/:uuid` | snapshot for resume | #20 |
 | `GET /session/:uuid/events` | SSE stream; `snapshot` first, then events with `id > Last-Event-ID` and live updates | #11 |
-| `POST /session/:uuid/material` | `MaterialCapture` ingest; dedupe; ping extract/scout/watch | #11, #14, #15, #22 |
-| `POST /session/:uuid/turn` | student actions | #11, #15, #16, #23 |
+| `POST /session/:uuid/material` | `MaterialCapture` ingest; dedupe; triage gate; then extract/scout/watch | #11, #14, #15, #22, #28 |
+| `POST /session/:uuid/turn` | student actions (`setMode`, `saveDraft`, `requestCheck`, `assess`, `ask`, `idk`) and canvas turns (`board-pen`, `board-shape`, `board-text`, `board-eraser`, `board-remove`, `board-text-move`, `board-pen-move`, `board-shape-move`) | #11, #15, #16, #23, #29 |
 | `GET /session/:uuid/export` | PDF response | #17 |
 | `GET /openapi.json` | OpenAPI YAML as JSON | #10 |
 | `GET /api-docs` | Swagger UI shell | #10 |
@@ -148,8 +151,11 @@ Wire shape (every SSE frame is JSON):
 
 ```
 id: <monotonic>
-event: <type>            // snapshot | material.accepted | extraction.update
-                         // | assessment.tick | tutor.turn | flag | error
+event: <type>            // snapshot | material.accepted | capture.triaged
+                         // | extraction.update | assessment.tick | tutor.turn
+                         // | board.element | board.remove | board.text-move
+                         // | board.pen-move | board.shape-move
+                         // | flag | error
 data: <json>
 ```
 
@@ -175,14 +181,18 @@ data: <json>
 4. `recordCapture()` in `store.ts` checks the rolling-5 hash window and
    populates `recentHashes`. Matches skip the rest.
 5. On a non-deduped capture the route publishes `material.accepted` and runs:
-   - `extractFromCapture` → appends new questions to the worksheet, publishes
-     `extraction.update {partial:false on first capture, true afterwards}`.
+   - `triageOnCapture` → `adapter.triage()` decides whether this frame carries
+     new context; publishes `capture.triaged`. On `update:false` extraction is
+     skipped (see §12.1); the watcher still runs.
+   - `extractFromCapture` (only when triage accepts) → appends new questions to
+     the worksheet, publishes `extraction.update {partial:false on first
+     capture, true afterwards}`.
    - `assessAllDrafts` → for every non-empty draft, publishes `assessment.tick`.
    - `watchOnCapture` → `adapter.watch()` → on `flag`, increments
      `ghostCounts[ghostKey]` and (if `count ≤ SILENT_THRESHOLD=2`) appends a
      `tutor.turn` to the question's thread. Always publishes `flag`.
-6. The companion pane renders new `extraction.update`, `assessment.tick`, and
-   `tutor.turn` events from `/events`.
+6. The companion pane renders new `capture.triaged`, `extraction.update`,
+   `assessment.tick`, and `tutor.turn` events from `/events`.
 
 ### 7.3 Student asks for a hint / reflection
 
@@ -193,6 +203,10 @@ data: <json>
 - `kind: "ask"` carries `message`. The fake echoes the message into the hint.
 - `kind: "saveDraft"` records under `state.drafts[questionId]` and immediately
   runs a Scout tick (`assessment.tick`) on the affected question.
+- `kind: "assess"` is the frontend-triggered check: it runs Scout, publishes
+  `assessment.tick`, and only calls the Tutor when `ScoutVerdict.escalate` is
+  true and the thread is below level 3 (see §12.2). Unlike `saveDraft`, it can
+  produce a `tutor.turn`.
 
 ### 7.4 Intervention ladder (#23)
 
@@ -235,6 +249,38 @@ the snapshot was taken. (Spec story #12.)
    filename="circlr-<uuid>.pdf"`. The companion's drop layer is the
    extension's concern (#18).
 
+### 7.8 Canvas turns and agent annotations
+
+The Board is the single shared canvas for the Session (CONTEXT.md). Lane B treats
+every canvas mutation as a `board-*` turn on the existing `POST
+/session/:uuid/turn` route, so `src/session/boardChannel.ts` posts to the same
+endpoint it always did.
+
+- **Student → server.** A `board-*` turn is validated by `TurnRequestSchema`,
+  applied to `state.board` with the pure `applyBoardTurn` reducer, and mirrored
+  to every subscriber as a board SSE event:
+
+  | Turn | SSE event |
+  | --- | --- |
+  | `board-pen` / `board-shape` / `board-text` | `board.element` `{element}` |
+  | `board-eraser` | one `board.remove` `{elementId}` per id |
+  | `board-remove` | `board.remove` `{elementId}` |
+  | `board-text-move` | `board.text-move` `{elementId,x,y,width?,fontSize?}` |
+  | `board-pen-move` | `board.pen-move` `{elementId,dx,dy}` |
+  | `board-shape-move` | `board.shape-move` `{elementId,x,y,width,height}` |
+
+- **Agent → canvas.** After every `tutor`/`idk` turn the loop calls
+  `adapter.annotate()`, which returns zero or more **additive** turns
+  (`BoardAnnotationTurn` = pen | shape | text, `author:"tutor"`). The loop applies
+  them with the same reducer and publishes `board.element`. Anchoring/erasing the
+  student's work is not in the annotation toolset, and annotation failures are
+  swallowed so they never break the tutor turn.
+
+- **Resume.** `GET /session/:uuid` returns `SessionSnapshot.board`, and the first
+  SSE frame (`snapshot`) carries it too, so a refresh re-hydrates the canvas.
+  Lane B frames board events as `event: board.*` + `data: <payload>`; the board
+  channel re-attaches the type from the event name on the client.
+
 ## 8. Test culture (spec mandate, kept intact)
 
 - All Lane B unit/integration tests target the external surface: HTTP
@@ -242,6 +288,11 @@ the snapshot was taken. (Spec story #12.)
 - `LLMAdapter` is **always injected as a fake** at the seam (`FakeAdapter`
   used by default; `getAdapter()` is the only entry point a vendor would
   plug into). No test calls a network or a vendor key.
+- The one exception is the opt-in live suite
+  (`src/lib/agent/opencode-adapter.live.test.ts`, `npm run test:live`), which
+  hits OpenCode Go for all five adapter roles. It is skipped unless
+  `CIRCLR_LLM_TEST_LIVE=1` and `OPENCODE_API` are set, so the default
+  `npm run test` and CI stay offline; the key is read from `.env` locally.
 - The OpenAPI invariant from #10 asserts the four endpoints and the
   no-`answer`/`final` field on `TutorTurn` so the wire shape can't
   regress. The smoke scripts (`next start` + curl) replay the canonical
@@ -261,13 +312,15 @@ the snapshot was taken. (Spec story #12.)
 | #20 | Resume: localStorage uuid + refresh survival | `GET /session/[uuid]/route.ts`; `drafts` in `SessionSnapshot` |
 | #22 | Watcher loop: checkpoint → vision check → flag | `watch()` on the adapter; `watchOnCapture` in `loop.ts`; `flag` SSE event |
 | #23 | Intervention ladder: Flag → Hint → Silent (fading) + IDK | recurrence in `watchOnCapture`, `idk()` on the adapter, `turn.kind:"idk"`, `ghostSummary` in `SessionSnapshot` |
+| #28 | Capture triage: small vision agent gates context updates | `triage()` on the adapter, `triageOnCapture` in `loop.ts`, `capture.triaged` SSE event |
+| #29 | Scout-first assessment with conditional Tutor escalation | `turn.kind:"assess"`, `ScoutVerdict.escalate`, `assess` branch in `processTurn` |
 
 ## 10. What other branches need from this surface
 
 | Branch | Dependency on Lane B |
 | --- | --- |
 | `extension` (Lane A) | `POST /session`, `POST /session/:uuid/material`, `POST /session/:uuid/turn`, `GET /session/:uuid/events` (subscribe). |
-| `shared-board` (Board UI) | Same routes as the extension. Board snapshots flow through `/material`; tutor annotations come from `tutor.turn` events; flag events become visual highlights on the canvas. |
+| `shared-board` (Board UI) | Same routes as the extension. Canvas turns post to `/turn` and come back as `board.*` SSE events; tutor annotations arrive as `board.element` (author `tutor`); flag events become visual highlights on the canvas. |
 | `side-panel` (companion pane host) | Hosts the side panel that points at `/{s.uuid}` (resume + live SSE). |
 
 ## 11. Known limitations / deferred
@@ -289,3 +342,72 @@ the snapshot was taken. (Spec story #12.)
 - **Watcher consensus / multiple checks per capture:** the design fires the
   watcher once per accepted capture. A future revision could fire per
   board stroke via a separate event stream if performance justifies it.
+
+## 12. Capture triage and Scout-first assessment
+
+Both extensions are implemented. Contract shapes live in `contracts.ts` and
+`openapi.yaml`; the `FakeAdapter` is deterministic and the default.
+
+### 12.1 Capture triage (#28)
+
+Hash dedupe only rejects byte-identical frames, so an overlapping scroll would
+otherwise re-ingest known questions. After `material.accepted`, the route runs a
+small vision agent (`adapter.triage`) that compares the capture against a digest
+of the session's current context and returns:
+
+```
+TriageVerdict { update: boolean, reason: string, novelty?: "new-questions" | "new-material" | "none" }
+```
+
+- `update:false` → publish `capture.triaged` and skip `extractFromCapture`. The
+  watcher (`watchOnCapture`) **still runs**: it inspects the student's visible
+  work, which is independent of whether the document text is new.
+- `update:true` → publish `capture.triaged`, then run the existing extract step.
+- Adapter error fails open (`update:true`) so ingestion never silently stops.
+
+The SSE event always carries `captureId`, `update`, and `reason`; `novelty` is
+present when the triage model supplies it.
+
+Timeline delta:
+
+```
+|-- POST /session/<uuid>/material>| (capture accepted)
+|                                |--> triage(capture, contextDigest) -->|
+|                                |<-- TriageVerdict -------------------|
+|<-- capture.triaged (id=N) -----|   update:false ? skip extract : extract
+|                                |--> extract(capture) ---------------->|
+|                                |--> watch(capture) ------------------>|
+```
+
+### 12.2 Scout-first assessment with Tutor escalation (#29)
+
+The frontend has an explicit "assess this draft" trigger; the Tutor speaks on
+`requestCheck`/`ask`, watcher flags, and now an escalating `assess`. A new turn
+kind on `POST /session/:uuid/turn`:
+
+```
+{ kind: "assess", questionId }
+```
+
+1. run `adapter.scout()` on the current draft,
+2. publish `assessment.tick` (always),
+3. if `ScoutVerdict.escalate` is `true` and the thread level is below 3, run
+   `adapter.tutor()` and publish `tutor.turn`.
+
+`saveDraft` keeps its non-escalating tick so typing never spams the Tutor.
+Tutor output remains a suggestion entry per #9 and never mutates the Draft
+field server-side. The frontend triggers this route; Lane B stays the only LLM
+caller. The OpenCode adapter requests `escalate` from the model and falls back
+to `status !== "solid"` when the model omits it.
+
+Timeline delta:
+
+```
+|-- POST /session/<uuid>/turn -->|   kind:"assess"
+|                                |--> scout(question,draft) ----------->|
+|                                |<-- ScoutVerdict {escalate} ----------|
+|<-- assessment.tick (id=N) -----|
+|                                |   escalate & level<3 ? tutor() : stop
+|                                |--> tutor(thread,currentLevel) ------>|
+|<-- tutor.turn (id=N+1) --------|
+```
