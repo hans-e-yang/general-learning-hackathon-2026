@@ -39,7 +39,7 @@ _Avoid_: the program, the background process, assistant
 The student's page containing the Document with the Companion pane beside it — on desktop, the Companion in the browser side panel; on tablets, the Companion PWA placed beside the browser via the OS's own split screen. Two panes: Document left, Companion right.
 
 **Capture**:
-An event-driven snapshot of the visible Document page (scroll, page change, fallback interval, idle nudge) sent to the vision LLM.
+A periodic snapshot of the visible Document page (the active tab, `captureVisibleTab`), taken every few seconds; near-duplicates are dropped by average-hash distance before it is sent to the vision LLM.
 
 **Mode Picker**:
 The fixed two-button choice (Assignment / Review) shown when a Session starts, which sets the mode.

@@ -1,26 +1,434 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --ink: #1a1a1a;
+  --ink-muted: #5c5a56;
+  --paper: #f7f3eb;
+  --paper-line: #e6e0d4;
+  --tutor: #b85c38;
+  --toolbar: #efe9dc;
+  --focus: #2f5d50;
+  --background: var(--paper);
+  --foreground: var(--ink);
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: var(--font-sans);
+  --font-display: var(--font-display);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-sans), "Source Sans 3", system-ui, sans-serif;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.board-app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 100dvh;
+  background:
+    radial-gradient(ellipse at 20% 0%, #fff9ef 0%, transparent 55%),
+    linear-gradient(180deg, #fbf7f0 0%, var(--paper) 40%);
+}
+
+.board-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.65rem 0.85rem;
+  padding: 0.65rem 0.85rem;
+  background: color-mix(in srgb, var(--toolbar) 88%, white);
+  border-bottom: 1px solid var(--paper-line);
+}
+
+.board-brand {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.1;
+  min-width: 4.5rem;
+}
+
+.board-brand-name {
+  font-family: var(--font-display), Georgia, serif;
+  font-size: 1.05rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.board-brand-sub {
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+
+.board-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  padding: 0.15rem;
+  background: color-mix(in srgb, white 70%, var(--toolbar));
+  border: 1px solid var(--paper-line);
+  border-radius: 0.45rem;
+}
+
+.board-tool {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--ink-muted);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 500;
+  padding: 0.3rem 0.55rem;
+  border-radius: 0.3rem;
+  cursor: pointer;
+}
+
+.board-tool.is-active {
+  background: var(--ink);
+  color: #f8f4ec;
+}
+
+.board-tool:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.board-options,
+.board-eraser-sizes,
+.board-shape-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.5rem;
+}
+
+.board-color-row,
+.board-weight-row {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.board-color-swatch {
+  appearance: none;
+  width: 1rem;
+  height: 1rem;
+  border-radius: 999px;
+  border: 2px solid transparent;
+  cursor: pointer;
+  padding: 0;
+}
+
+.board-color-swatch.is-active {
+  border-color: var(--focus);
+  outline: 1px solid #fffdf8;
+}
+
+.board-weight {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  width: 1.4rem;
+  height: 1.4rem;
+  border-radius: 0.3rem;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+.board-weight.is-active {
+  background: color-mix(in srgb, var(--ink) 10%, transparent);
+}
+
+.board-weight-dot {
+  display: block;
+  border-radius: 999px;
+}
+
+.board-eraser-size {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 0.3rem;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+.board-eraser-size.is-active {
+  background: color-mix(in srgb, var(--ink) 10%, transparent);
+}
+
+.board-eraser-size-dot {
+  display: block;
+  border-radius: 999px;
+  border: 1.5px solid var(--ink-muted);
+  background: color-mix(in srgb, var(--ink-muted) 12%, transparent);
+}
+
+.board-legend {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-left: auto;
+  font-size: 0.75rem;
+  color: var(--ink-muted);
+}
+
+.board-swatch {
+  width: 0.65rem;
+  height: 0.65rem;
+  border-radius: 999px;
+  display: inline-block;
+}
+
+.board-swatch.student {
+  background: var(--ink);
+}
+
+.board-swatch.tutor {
+  background: var(--tutor);
+}
+
+.board-dev-inject {
+  appearance: none;
+  border: 1px dashed color-mix(in srgb, var(--tutor) 50%, var(--paper-line));
+  background: transparent;
+  color: var(--tutor);
+  font: inherit;
+  font-size: 0.72rem;
+  padding: 0.3rem 0.55rem;
+  border-radius: 0.3rem;
+  cursor: pointer;
+}
+
+.board-surface-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  container-type: size;
+  /* Solid paper only — grid is a separate overlay so eraser cannot cover it. */
+  background-color: #fffdf8;
+}
+
+.board-surface {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+  cursor: crosshair;
+  background: transparent;
+  position: relative;
+  z-index: 0;
+}
+
+.board-surface.is-text-tool {
+  cursor: text;
+}
+
+.board-surface.is-eraser-tool {
+  cursor: none;
+}
+
+.board-eraser-tip {
+  fill: color-mix(in srgb, var(--ink-muted) 12%, transparent);
+  stroke: color-mix(in srgb, var(--ink-muted) 45%, transparent);
+  stroke-width: 1.5;
+  pointer-events: none;
+}
+
+.board-grid-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  /* Tileable SVG grid — multiply so lines show on paper but not across black ink. */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28'%3E%3Cpath d='M28 0H0M0 0v28' stroke='%23e6e0d4' stroke-width='1' fill='none'/%3E%3C/svg%3E");
+  background-size: 28px 28px;
+  background-repeat: repeat;
+  mix-blend-mode: multiply;
+}
+
+/* Mirrors SVG preserveAspectRatio=xMidYMin meet for percentage → board mapping. */
+.board-coord-plane {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  translate: -50% 0;
+  width: min(100cqw, calc(100cqh * 800 / 1200));
+  height: min(100cqh, calc(100cqw * 1200 / 800));
+  pointer-events: none;
+  z-index: 2;
+}
+
+.board-eraser-stroke {
+  /* Paper-color cover-up; grid overlay above keeps lines visible. */
+  stroke: #fffdf8;
+}
+
+.board-fo {
+  font-family: var(--font-sans), "Source Sans 3", system-ui, sans-serif;
+  line-height: 1.35;
+  color: inherit;
+}
+
+.board-text,
+.board-katex {
+  font-size: 1rem;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.board-text.is-degraded {
+  opacity: 0.85;
+  border-bottom: 1px dashed color-mix(in srgb, var(--tutor) 40%, transparent);
+}
+
+.board-surface.is-select-tool {
+  cursor: default;
+}
+
+.board-surface path.is-selected,
+.board-surface g.is-selected > * {
+  filter: drop-shadow(0 0 2px color-mix(in srgb, var(--focus) 70%, transparent));
+}
+
+.board-text-chip.is-selected {
+  border-color: var(--focus);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--focus) 45%, transparent);
+}
+
+.board-text-chip {
+  position: absolute;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.2rem;
+  max-width: min(26rem, 80%);
+  padding: 0.15rem 0.2rem 0.15rem 0.15rem;
+  transform: translate(0, -0.35em);
+  pointer-events: auto;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  background: color-mix(in srgb, #fffdf8 92%, transparent);
+  border: 1px solid color-mix(in srgb, var(--paper-line) 80%, transparent);
+  border-radius: 0.3rem;
+  box-shadow: 0 1px 4px color-mix(in srgb, var(--ink) 8%, transparent);
+}
+
+.board-text-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.board-text-resize {
+  appearance: none;
+  flex: 0 0 auto;
+  align-self: flex-end;
+  width: 0.7rem;
+  height: 0.7rem;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-right: 2px solid var(--ink-muted);
+  border-bottom: 2px solid var(--ink-muted);
+  background: transparent;
+  cursor: nwse-resize;
+  opacity: 0.7;
+}
+
+.board-text-resize:hover {
+  opacity: 1;
+  border-color: var(--focus);
+}
+
+.board-text-chip.is-dragging {
+  cursor: grabbing;
+  z-index: 4;
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--ink) 16%, transparent);
+}
+
+.board-text-chip[data-author="tutor"] {
+  border-color: color-mix(in srgb, var(--tutor) 35%, var(--paper-line));
+}
+
+.board-text-close {
+  appearance: none;
+  flex: 0 0 auto;
+  width: 1.15rem;
+  height: 1.15rem;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0.2rem;
+  background: transparent;
+  color: var(--ink-muted);
+  font: inherit;
+  font-size: 0.95rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.board-text-close:hover,
+.board-text-close:focus-visible {
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
+  color: var(--ink);
+  outline: none;
+}
+
+.board-text-draft {
+  position: absolute;
+  transform: translate(0, -0.35em);
+  max-width: 70%;
+  pointer-events: auto;
+  z-index: 3;
+}
+
+.board-text-draft input {
+  width: min(14rem, 55vw);
+  font: inherit;
+  font-size: 0.95rem;
+  padding: 0.25rem 0.4rem;
+  border: 1px solid var(--focus);
+  border-radius: 0.25rem;
+  background: #fffdf8;
+  color: var(--ink);
+  box-shadow: 0 2px 10px color-mix(in srgb, var(--ink) 12%, transparent);
+}
+
+.board-text-draft input:focus {
+  outline: 2px solid color-mix(in srgb, var(--focus) 55%, white);
+  outline-offset: 1px;
 }

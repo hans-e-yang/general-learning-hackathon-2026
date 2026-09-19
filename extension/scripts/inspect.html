@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Circlr capture inspector</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --panel: #171a21;
+        --border: #2a2f3a;
+        --muted: #8b93a7;
+        --accent: #5eead4;
+        --warn: #fca5a5;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+        background: var(--bg);
+        color: #e5e7eb;
+        font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 10px 14px;
+        border-bottom: 1px solid var(--border);
+        flex-wrap: wrap;
+      }
+      header h1 { font-size: 13px; margin: 0; }
+      .grow { flex: 1; }
+      .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--warn); }
+      .dot.on { background: var(--accent); }
+      .session { color: var(--muted); }
+      button {
+        background: var(--panel);
+        color: inherit;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 4px 10px;
+        cursor: pointer;
+        font: inherit;
+      }
+      button:hover { border-color: var(--accent); }
+      main { flex: 1; overflow-y: auto; padding: 12px; }
+      #empty { color: var(--muted); padding: 24px; text-align: center; }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+        gap: 12px;
+      }
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        overflow: hidden;
+      }
+      .card img {
+        display: block;
+        width: 100%;
+        max-height: 260px;
+        object-fit: contain;
+        background: #000;
+      }
+      .card .meta {
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 6px 8px;
+        color: var(--muted);
+        font-size: 11px;
+        flex-wrap: wrap;
+      }
+      .card .meta b { color: var(--accent); font-weight: 600; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <span class="dot" id="dot"></span>
+      <h1>Circlr capture inspector</h1>
+      <span class="grow"></span>
+      <span class="session" id="session"></span>
+      <span class="session" id="count">0 captures</span>
+      <button id="clear">Clear view</button>
+    </header>
+    <main>
+      <p id="empty">Waiting for captures… click the Circlr action on a document page.</p>
+      <div class="grid" id="grid"></div>
+    </main>
+    <script>
+      const params = new URLSearchParams(location.search);
+      const session = params.get("s") || "";
+      const dot = document.getElementById("dot");
+      const grid = document.getElementById("grid");
+      const empty = document.getElementById("empty");
+      const countEl = document.getElementById("count");
+      const sessionEl = document.getElementById("session");
+      sessionEl.textContent = session ? "session " + session.slice(0, 8) : "all sessions";
+
+      let count = 0;
+      const seen = new Set();
+
+      const src = "/events" + (session ? "?s=" + encodeURIComponent(session) : "");
+      const es = new EventSource(src);
+
+      es.onopen = () => dot.classList.add("on");
+      es.onerror = () => dot.classList.remove("on");
+
+      es.addEventListener("capture", (ev) => {
+        const capture = JSON.parse(ev.data);
+        if (seen.has(capture.seq)) return;
+        seen.add(capture.seq);
+        render(capture);
+        count += 1;
+        countEl.textContent = count + (count === 1 ? " capture" : " captures");
+        empty.hidden = true;
+      });
+
+      document.getElementById("clear").addEventListener("click", () => {
+        grid.replaceChildren();
+        seen.clear();
+        count = 0;
+        countEl.textContent = "0 captures";
+        empty.hidden = false;
+      });
+
+      function render(capture) {
+        const card = document.createElement("div");
+        card.className = "card";
+
+        const img = document.createElement("img");
+        img.src = toDataUrl(capture.image);
+        img.alt = "capture " + capture.seq;
+        img.loading = "lazy";
+        card.appendChild(img);
+
+        const meta = document.createElement("div");
+        meta.className = "meta";
+        meta.append(
+          span("seq ", capture.seq),
+          span("page ", capture.pageIndex),
+          span("scroll ", Number(capture.scrollRatio).toFixed(3)),
+          span("hash ", capture.hash || "(none)"),
+          span("", new Date(capture.timestamp).toLocaleTimeString())
+        );
+        if (!session && capture.session) meta.prepend(span("s ", String(capture.session).slice(0, 8)));
+        card.appendChild(meta);
+
+        grid.prepend(card);
+      }
+
+      function span(label, value) {
+        const el = document.createElement("span");
+        if (label) {
+          const b = document.createElement("b");
+          b.textContent = label;
+          el.appendChild(b);
+        }
+        el.appendChild(document.createTextNode(String(value)));
+        return el;
+      }
+
+      function toDataUrl(image) {
+        if (!image) return "";
+        return image.startsWith("data:") ? image : "data:image/jpeg;base64," + image;
+      }
+    </script>
+  </body>
+</html>

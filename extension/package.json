@@ -1,0 +1,19 @@
+{
+  "name": "circlr-extension",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "npm run compile && npm run icon && npm run clean",
+    "compile": "tsc -p tsconfig.json",
+    "icon": "node scripts/icon.mjs",
+    "clean": "node scripts/clean.mjs",
+    "inspect": "node scripts/inspect-server.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.3.0",
+    "typescript": "^5.0.0",
+    "vitest": "^3.2.7"
+  }
+}

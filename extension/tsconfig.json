@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "bundler",
+    "types": ["chrome"],
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "strict": true,
+    "noEmit": false,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "rootDir": "src",
+    "outDir": "."
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules", "scripts", "dist", "src/**/*.test.ts"]
+}
