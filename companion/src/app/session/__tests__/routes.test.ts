@@ -321,7 +321,7 @@ describe("/session/:uuid/turn idk (#23)", () => {
     getOrCreate(s.uuid);
     const state = getOrCreate(s.uuid);
     state.worksheet = [
-      { id: "q-p0-0", index: 0, text: "Define continuity at a point.", status: "blocked" },
+      { id: "q-p0-0", index: 0, text: "Define continuity at a point.", label: "1", status: "blocked" },
     ];
 
     const ctrl = new AbortController();
@@ -569,7 +569,7 @@ describe("/session/:uuid/export GET (#17)", () => {
       captures: [],
       recentHashes: [],
       worksheet: [
-        { id: "q-p0-0", index: 0, text: "Define continuity.", status: "on-track" },
+        { id: "q-p0-0", index: 0, text: "Define continuity.", label: "1", status: "on-track" },
       ],
       drafts: { "q-p0-0": "Continuity means no breaks." },
       threads: {
@@ -619,7 +619,7 @@ describe("/session/:uuid GET (#20 resume)", () => {
       ],
       recentHashes: ["feedfacec0ffee01"],
       worksheet: [
-        { id: "q-p0-0", index: 0, text: "Q?", status: "on-track" },
+        { id: "q-p0-0", index: 0, text: "Q?", label: "1", status: "on-track" },
       ],
       drafts: { "q-p0-0": "draft text" },
       threads: {},
@@ -696,7 +696,7 @@ describe("/session/:uuid GET (#20 resume)", () => {
     getOrCreate(s.uuid);
     const state = getOrCreate(s.uuid);
     state.worksheet = [
-      { id: "q-p0-0", index: 0, text: "Continuity?", status: "blocked" },
+      { id: "q-p0-0", index: 0, text: "Continuity?", label: "1", status: "blocked" },
     ];
     state.drafts = { "q-p0-0": "the limit is 1, therefore…" };
 

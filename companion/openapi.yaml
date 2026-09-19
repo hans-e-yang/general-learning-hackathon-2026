@@ -250,7 +250,7 @@ components:
           description: Student-initiated escape hatch — smallest unblock on this question
     QuestionBlock:
       type: object
-      required: [id, index, text, status]
+      required: [id, index, text, label, status]
       properties:
         id:
           type: string
@@ -259,6 +259,10 @@ components:
           minimum: 0
         text:
           type: string
+        label:
+          type: string
+          minLength: 1
+          description: Soft board title from the printed question label (e.g. 1a, 2)
         status:
           $ref: "#/components/schemas/AssessmentStatus"
     GhostSummaryEntry:
@@ -281,7 +285,7 @@ components:
           description: true when the ghost has recurred past the intervention ladder's threshold
     ExtractedQuestion:
       type: object
-      required: [id, index, text]
+      required: [id, index, text, label]
       properties:
         id:
           type: string
@@ -290,6 +294,10 @@ components:
           minimum: 0
         text:
           type: string
+        label:
+          type: string
+          minLength: 1
+          description: Soft board title from the printed question label (e.g. 1a, 2)
     TutorTurn:
       type: object
       required: [questionId, hint, level, escalation]

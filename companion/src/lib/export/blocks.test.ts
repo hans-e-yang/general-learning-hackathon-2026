@@ -27,8 +27,8 @@ describe("buildExportBlocks (#17)", () => {
   it("returns one block per worksheet question, in worksheet order", () => {
     const state = makeSession({
       worksheet: [
-        { id: "q-p0-0", index: 0, text: "First?", status: "on-track" },
-        { id: "q-p0-1", index: 1, text: "Second?", status: "blocked" },
+        { id: "q-p0-0", index: 0, text: "First?", label: "1", status: "on-track" },
+        { id: "q-p0-1", index: 1, text: "Second?", label: "2", status: "blocked" },
       ],
       drafts: { "q-p0-0": "yes", "q-p0-1": "" },
       threads: { "q-p0-0": [{ questionId: "q-p0-0", hint: "ask first", level: 0, escalation: "same" }] },
@@ -43,7 +43,7 @@ describe("buildExportBlocks (#17)", () => {
 
   it("yields empty drafts as the literal \"[no answer provided]\" marker target", () => {
     const state = makeSession({
-      worksheet: [{ id: "q-p0-0", index: 0, text: "Define continuity.", status: "blocked" }],
+      worksheet: [{ id: "q-p0-0", index: 0, text: "Define continuity.", label: "1", status: "blocked" }],
       drafts: {},
       threads: {},
     });
@@ -54,8 +54,8 @@ describe("buildExportBlocks (#17)", () => {
   it("respects the worksheet order even if drafts arrive in a different order", () => {
     const state = makeSession({
       worksheet: [
-        { id: "qB", index: 0, text: "B?", status: "on-track" },
-        { id: "qA", index: 1, text: "A?", status: "blocked" },
+        { id: "qB", index: 0, text: "B?", label: "1", status: "on-track" },
+        { id: "qA", index: 1, text: "A?", label: "2", status: "blocked" },
       ],
       drafts: { qA: "draft A", qB: "draft B" },
     });

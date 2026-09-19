@@ -12,6 +12,7 @@ const SAMPLE: ExportInput = {
         id: "q-p0-0",
         index: 0,
         text: "Compute the limit as x approaches 0 of sin(x)/x.",
+        label: "1",
         status: "on-track",
       },
       draft:
@@ -25,6 +26,7 @@ const SAMPLE: ExportInput = {
         id: "q-p0-1",
         index: 1,
         text: "Define continuity at a point.",
+        label: "2",
         status: "blocked",
       },
       draft: "",

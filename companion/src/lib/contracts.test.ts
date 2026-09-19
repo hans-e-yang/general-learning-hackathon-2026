@@ -143,6 +143,30 @@ describe("contracts: SSE events", () => {
   it("rejects an unknown event type", () => {
     expect(safeParseSseEvent({ type: "mystery", data: {} }).success).toBe(false);
   });
+
+  it("requires label on QuestionBlock inside extraction.update", () => {
+    const ev = {
+      type: "extraction.update",
+      data: {
+        partial: false,
+        questions: [{ id: "q-p0-0", index: 0, text: "Define f?", status: "blocked" }],
+      },
+    };
+    expect(safeParseSseEvent(ev).success).toBe(false);
+  });
+
+  it("accepts extraction.update with labels", () => {
+    const ev = {
+      type: "extraction.update",
+      data: {
+        partial: false,
+        questions: [
+          { id: "q-p0-0", index: 0, text: "Define f?", status: "blocked", label: "1a" },
+        ],
+      },
+    };
+    expect(safeParseSseEvent(ev).success).toBe(true);
+  });
 });
 
 describe("contracts: Mode enum", () => {

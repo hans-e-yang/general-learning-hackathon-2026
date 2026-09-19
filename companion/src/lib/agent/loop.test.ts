@@ -58,7 +58,7 @@ describe("agent/loop saveDraft + setMode", () => {
   it("saveDraft stores the draft under the questionId", async () => {
     const { publisher } = capture();
     configureAgentLoop({ adapter: fakeAdapter, publishEvent: publisher });
-    seedSession("u1", { worksheet: [{ id: "q1", index: 0, text: "x", status: "blocked" }] });
+    seedSession("u1", { worksheet: [{ id: "q1", index: 0, text: "x", label: "1", status: "blocked" }] });
     await processTurn("u1", { kind: "saveDraft", questionId: "q1", draft: "drafting..." });
     const state = get("u1");
     expect(state?.drafts.q1).toBe("drafting...");
@@ -68,7 +68,7 @@ describe("agent/loop saveDraft + setMode", () => {
     const { events, publisher } = capture();
     configureAgentLoop({ adapter: fakeAdapter, publishEvent: publisher });
     seedSession("u1", {
-      worksheet: [{ id: "q1", index: 0, text: "x", status: "blocked" }],
+      worksheet: [{ id: "q1", index: 0, text: "x", label: "1", status: "blocked" }],
       captures: [
         { captureId: "c1", pageIndex: 0, hash: "abcabcabcabcabca", timestamp: 1, deduped: false },
       ],
@@ -87,7 +87,7 @@ describe("agent/loop saveDraft + setMode", () => {
   it("saveDraft skips the Scout tick when the draft is empty", async () => {
     const { events, publisher } = capture();
     configureAgentLoop({ adapter: fakeAdapter, publishEvent: publisher });
-    seedSession("u1", { worksheet: [{ id: "q1", index: 0, text: "x", status: "blocked" }] });
+    seedSession("u1", { worksheet: [{ id: "q1", index: 0, text: "x", label: "1", status: "blocked" }] });
     await processTurn("u1", { kind: "saveDraft", questionId: "q1", draft: "" });
     expect(events.find((e) => e.evt.type === "assessment.tick")).toBeUndefined();
   });
@@ -98,7 +98,7 @@ describe("agent/loop requestCheck", () => {
     const { events, publisher } = capture();
     configureAgentLoop({ adapter: fakeAdapter, publishEvent: publisher });
     seedSession("u1", {
-      worksheet: [{ id: "q1", index: 0, text: "x", status: "blocked" }],
+      worksheet: [{ id: "q1", index: 0, text: "x", label: "1", status: "blocked" }],
       captures: [
         { captureId: "c1", pageIndex: 0, hash: "abcabcabcabcabca", timestamp: 1, deduped: false },
       ],
@@ -129,7 +129,7 @@ describe("agent/loop ask", () => {
     const { events, publisher } = capture();
     configureAgentLoop({ adapter: fakeAdapter, publishEvent: publisher });
     seedSession("u1", {
-      worksheet: [{ id: "q1", index: 0, text: "x", status: "blocked" }],
+      worksheet: [{ id: "q1", index: 0, text: "x", label: "1", status: "blocked" }],
       captures: [
         { captureId: "c1", pageIndex: 0, hash: "abcabcabcabcabca", timestamp: 1, deduped: false },
       ],
@@ -194,7 +194,7 @@ describe("agent/loop continuous Scout (#15)", () => {
     const { events, publisher } = capture();
     configureAgentLoop({ adapter: fakeAdapter, publishEvent: publisher });
     seedSession("u1", {
-      worksheet: [{ id: "q1", index: 0, text: "x", status: "blocked" }],
+      worksheet: [{ id: "q1", index: 0, text: "x", label: "1", status: "blocked" }],
       drafts: { q1: "yes because of small-angle approximation" },
       captures: [
         { captureId: "c1", pageIndex: 0, hash: "abcabcabcabcabca", timestamp: 1, deduped: false },
@@ -210,9 +210,9 @@ describe("agent/loop continuous Scout (#15)", () => {
     configureAgentLoop({ adapter: fakeAdapter, publishEvent: publisher });
     seedSession("u1", {
       worksheet: [
-        { id: "q1", index: 0, text: "x", status: "blocked" },
-        { id: "q2", index: 1, text: "y", status: "blocked" },
-        { id: "q3", index: 2, text: "z", status: "blocked" },
+        { id: "q1", index: 0, text: "x", label: "1", status: "blocked" },
+        { id: "q2", index: 1, text: "y", label: "2", status: "blocked" },
+        { id: "q3", index: 2, text: "z", label: "3", status: "blocked" },
       ],
       drafts: { q1: "a", q2: "b because", q3: "" },
       captures: [
@@ -234,7 +234,7 @@ describe("agent/loop Socratic thread (#16)", () => {
     const { events, publisher } = capture();
     configureAgentLoop({ adapter: fakeAdapter, publishEvent: publisher });
     seedSession("u1", {
-      worksheet: [{ id: "q1", index: 0, text: "x", status: "blocked" }],
+      worksheet: [{ id: "q1", index: 0, text: "x", label: "1", status: "blocked" }],
       captures: [
         { captureId: "c1", pageIndex: 0, hash: "abcabcabcabcabca", timestamp: 1, deduped: false },
       ],
@@ -261,7 +261,7 @@ describe("agent/loop Socratic thread (#16)", () => {
     const { events, publisher } = capture();
     configureAgentLoop({ adapter: fakeAdapter, publishEvent: publisher });
     seedSession("u1", {
-      worksheet: [{ id: "q1", index: 0, text: "x", status: "blocked" }],
+      worksheet: [{ id: "q1", index: 0, text: "x", label: "1", status: "blocked" }],
       captures: [
         { captureId: "c1", pageIndex: 0, hash: "abcabcabcabcabca", timestamp: 1, deduped: false },
       ],
@@ -286,8 +286,8 @@ describe("agent/loop Socratic thread (#16)", () => {
     configureAgentLoop({ adapter: fakeAdapter, publishEvent: publisher });
     seedSession("u1", {
       worksheet: [
-        { id: "q1", index: 0, text: "x", status: "blocked" },
-        { id: "q2", index: 1, text: "y", status: "blocked" },
+        { id: "q1", index: 0, text: "x", label: "1", status: "blocked" },
+        { id: "q2", index: 1, text: "y", label: "2", status: "blocked" },
       ],
     });
     await processTurn("u1", { kind: "requestCheck", questionId: "q1" });
@@ -307,7 +307,7 @@ describe("agent/loop watcher (#22)", () => {
       captures: [
         { captureId: "c1", pageIndex: 0, hash: "feedfacec0ffee0e", timestamp: 1, deduped: false },
       ],
-      worksheet: [{ id: "q-p0-0", index: 0, text: "Continuity?", status: "blocked" }],
+      worksheet: [{ id: "q-p0-0", index: 0, text: "Continuity?", label: "1", status: "blocked" }],
     });
     const verdict = await watchOnCapture("u1", "feedfacec0ffee0e", 0);
     expect(verdict?.flag).toBe(true);
@@ -326,7 +326,7 @@ describe("agent/loop watcher (#22)", () => {
       captures: [
         { captureId: "c1", pageIndex: 0, hash: "1234567890abcdef", timestamp: 1, deduped: false },
       ],
-      worksheet: [{ id: "q-p0-0", index: 0, text: "Continuity?", status: "blocked" }],
+      worksheet: [{ id: "q-p0-0", index: 0, text: "Continuity?", label: "1", status: "blocked" }],
     });
     const verdict = await watchOnCapture("u1", "1234567890abcdef", 0);
     expect(verdict?.flag).toBe(false);
@@ -341,7 +341,7 @@ describe("agent/loop watcher (#22)", () => {
         { captureId: "c1", pageIndex: 0, hash: "feedfacec0ffee0e", timestamp: 1, deduped: false },
         { captureId: "c1", pageIndex: 0, hash: "feedfacec0ffee0e", timestamp: 2, deduped: true },
       ],
-      worksheet: [{ id: "q-p0-0", index: 0, text: "x", status: "blocked" }],
+      worksheet: [{ id: "q-p0-0", index: 0, text: "x", label: "1", status: "blocked" }],
     });
     await watchOnCapture("u1", "feedfacec0ffee0e", 0);
     await watchOnCapture("u1", "feedfacec0ffee0e", 0);
@@ -358,7 +358,7 @@ describe("agent/loop intervention ladder (#23)", () => {
       captures: [
         { captureId: "c1", pageIndex: 0, hash: "feedfacec0ffee0e", timestamp: 1, deduped: false },
       ],
-      worksheet: [{ id: "q-p0-0", index: 0, text: "Continuity?", status: "blocked" }],
+      worksheet: [{ id: "q-p0-0", index: 0, text: "Continuity?", label: "1", status: "blocked" }],
     });
 
     const HASH = "feedfacec0ffee0e";
@@ -379,7 +379,7 @@ describe("agent/loop intervention ladder (#23)", () => {
       captures: [
         { captureId: "c1", pageIndex: 0, hash: "0000000000000000", timestamp: 1, deduped: false },
       ],
-      worksheet: [{ id: "q-p0-0", index: 0, text: "x", status: "blocked" }],
+      worksheet: [{ id: "q-p0-0", index: 0, text: "x", label: "1", status: "blocked" }],
     });
 
     await watchOnCapture("u1", "0000000000000000", 0);
@@ -408,7 +408,7 @@ describe("agent/loop intervention ladder (#23)", () => {
       captures: [
         { captureId: "c1", pageIndex: 0, hash: "feedfacec0ffee0e", timestamp: 1, deduped: false },
       ],
-      worksheet: [{ id: "q-p0-0", index: 0, text: "x", status: "blocked" }],
+      worksheet: [{ id: "q-p0-0", index: 0, text: "x", label: "1", status: "blocked" }],
     });
 
     const HASH = "feedfacec0ffee0e";
@@ -432,7 +432,7 @@ describe("agent/loop IDK (#23)", () => {
     configureAgentLoop({ adapter: fakeAdapter, publishEvent: publisher });
     seedSession("u1", {
       worksheet: [
-        { id: "q-p0-0", index: 0, text: "Why does sin(x)/x approach 1?", status: "blocked" },
+        { id: "q-p0-0", index: 0, text: "Why does sin(x)/x approach 1?", label: "1", status: "blocked" },
       ],
     });
     await processTurn("u1", { kind: "idk", questionId: "q-p0-0" });
@@ -448,7 +448,7 @@ describe("agent/loop IDK (#23)", () => {
     configureAgentLoop({ adapter: fakeAdapter, publishEvent: publisher });
     seedSession("u1", {
       worksheet: [
-        { id: "q-p0-0", index: 0, text: "What is the answer to everything?", status: "blocked" },
+        { id: "q-p0-0", index: 0, text: "What is the answer to everything?", label: "1", status: "blocked" },
       ],
     });
     await processTurn("u1", { kind: "idk", questionId: "q-p0-0" });
@@ -465,7 +465,7 @@ describe("agent/loop lazy boot", () => {
     const { events, publisher } = capture();
     configureAgentLoop({ adapter: fakeAdapter, publishEvent: publisher });
     seedSession("u1", {
-      worksheet: [{ id: "q1", index: 0, text: "x", status: "blocked" }],
+      worksheet: [{ id: "q1", index: 0, text: "x", label: "1", status: "blocked" }],
       captures: [
         { captureId: "c1", pageIndex: 0, hash: "abcabcabcabcabca", timestamp: 1, deduped: false },
       ],

@@ -75,6 +75,7 @@ export const QuestionBlockSchema = z.object({
   id: z.string(),
   index: z.number().int().nonnegative(),
   text: z.string(),
+  label: z.string().min(1),
   status: AssessmentStatusSchema,
 });
 export type QuestionBlock = z.infer<typeof QuestionBlockSchema>;
@@ -83,6 +84,7 @@ export const ExtractedQuestionSchema = z.object({
   id: z.string(),
   index: z.number().int().nonnegative(),
   text: z.string(),
+  label: z.string().min(1),
 });
 export type ExtractedQuestion = z.infer<typeof ExtractedQuestionSchema>;
 
