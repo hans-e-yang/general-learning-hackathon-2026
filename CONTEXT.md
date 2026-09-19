@@ -51,5 +51,5 @@ The generated PDF produced at the end of an Assignment Mode session — one ques
 One Document opened in the Split View, in exactly one mode, from opening to export or close.
 
 **Board**:
-The single shared canvas for a whole Session: a freehand whiteboard (pen strokes, eraser, text) that the student and the Tutor both mark. The Tutor's marks are suggested annotations (arrows, circles) and remain visually distinguished from the student's. The Board never contains a final answer written by the Tutor.
+One freehand canvas per extracted question in a Session, soft-titled by the question's vision `label` (e.g. `1a`, `2`). The student works exclusively on the active board (pen strokes, eraser, text); Tutor marks (later) remain visually distinguished from the student's. The Board never contains a final answer written by the Tutor.
 _Avoid_: canvas, jamboard, whiteboard app
