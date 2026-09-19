@@ -6,6 +6,8 @@ export type WorksheetListener = (questions: WorksheetQuestion[]) => void;
 
 export type SubscribeWorksheetOptions = {
   baseUrl?: string;
+  /** Fired when a capture starts LLM extract (`true`) and when extraction finishes (`false`). */
+  onCaptureProcessing?: (busy: boolean) => void;
 };
 
 const ExtractionDataSchema = z.object({
@@ -47,8 +49,9 @@ export function subscribeWorksheet(
   const base = (options?.baseUrl ?? "").replace(/\/$/, "");
   const url = `${base}/session/${sessionUuid}/events`;
   const source = new EventSource(url);
+  const onProcessing = options?.onCaptureProcessing;
 
-  const handle = (type: string, raw: string) => {
+  const handleQuestions = (type: string, raw: string) => {
     try {
       const data = JSON.parse(raw) as unknown;
       const qs = questionsFromSsePayload(type, data);
@@ -59,10 +62,14 @@ export function subscribeWorksheet(
   };
 
   source.addEventListener("snapshot", (ev) => {
-    handle("snapshot", (ev as MessageEvent).data);
+    handleQuestions("snapshot", (ev as MessageEvent).data);
+  });
+  source.addEventListener("material.accepted", () => {
+    onProcessing?.(true);
   });
   source.addEventListener("extraction.update", (ev) => {
-    handle("extraction.update", (ev as MessageEvent).data);
+    handleQuestions("extraction.update", (ev as MessageEvent).data);
+    onProcessing?.(false);
   });
 
   return () => source.close();

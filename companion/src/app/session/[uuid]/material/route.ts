@@ -35,16 +35,16 @@ export async function POST(
       type: "material.accepted",
       data: { captureId, deduped: false },
     });
-    const update = await triageOnCapture(
+    // Triage still publishes novelty for the UI/context, but boards must grow
+    // even when the model mis-labels a scroll as redundant (e.g. missed 5a/5b).
+    await triageOnCapture(
       uuid,
       captureId,
       parsed.data.hash,
       parsed.data.pageIndex,
       parsed.data.image
     );
-    if (update) {
-      await extractFromCapture(uuid, parsed.data.hash, parsed.data.pageIndex, parsed.data.image);
-    }
+    await extractFromCapture(uuid, parsed.data.hash, parsed.data.pageIndex, parsed.data.image);
     await assessAllDrafts(uuid, {
       captureHash: parsed.data.hash,
       pageIndex: parsed.data.pageIndex,

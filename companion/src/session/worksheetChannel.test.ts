@@ -37,3 +37,16 @@ describe("questionsFromSsePayload", () => {
     ).toBeNull();
   });
 });
+
+describe("subscribeWorksheet capture processing", () => {
+  it("exposes onCaptureProcessing on the options type via a no-op subscribe shape", () => {
+    // Smoke: options accept the callback (runtime EventSource is browser-only).
+    const options: import("./worksheetChannel").SubscribeWorksheetOptions = {
+      onCaptureProcessing: (busy) => {
+        expect(typeof busy).toBe("boolean");
+      },
+    };
+    options.onCaptureProcessing?.(true);
+    options.onCaptureProcessing?.(false);
+  });
+});

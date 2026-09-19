@@ -29,16 +29,16 @@ const HINT_LADDER = [
   "Walk me through each step. Do not yet write your final sentence.",
 ];
 
-/** Stable bank shaped like real worksheets (1a/1b, not flat 1/2/3). */
+/** Demo bank only — FakeAdapter does NOT read the capture image. */
 const QUESTION_BANK: { label: string; text: string }[] = [
-  { label: "1a", text: "Exercise 1\na) Describe the sample space for this experiment." },
-  { label: "1b", text: "b) Compute P(A ∪ B) given the information on the page." },
-  { label: "1c", text: "c) Are events A and B independent? Justify briefly." },
-  { label: "2", text: "Exercise 2. Find the conditional probability P(A|B)." },
-  { label: "2a", text: "Exercise 2\na) State Bayes' theorem and identify each term." },
-  { label: "2b", text: "b) Give an example of mutually exclusive events." },
-  { label: "3", text: "Exercise 3. Compute the expected value of the discrete r.v." },
-  { label: "3a", text: "Exercise 3\na) Sketch the cdf of the distribution on the sheet." },
+  { label: "1a", text: "Exercise 1\na) A biased die and a probability table." },
+  { label: "1b", text: "b) Expected value and an indicator function." },
+  { label: "1c", text: "c) Entropy / mutual information for independent variables." },
+  { label: "1d", text: "d) Further entropy / information identity on the sheet." },
+  { label: "2", text: "Exercise 2. Maximum likelihood estimates of naive Bayes (Laplacian)." },
+  { label: "3", text: "Exercise 3. Posterior of LDA is a sigmoid; prove the form." },
+  { label: "4", text: "Exercise 4. Further worksheet problem visible after scrolling." },
+  { label: "5", text: "Exercise 5. Later worksheet problem visible after scrolling." },
 ];
 
 const TUTOR_SYSTEM =
@@ -122,15 +122,17 @@ export class FakeAdapter implements LLMAdapter {
   readonly name = "fake";
 
   async extract(input: ExtractInput): Promise<ExtractedQuestion[]> {
-    // Disjoint windows per pageIndex so scrolling/new pages add new boards.
-    const windowSize = 3;
-    const start = Math.min(
-      input.pageIndex * windowSize,
-      Math.max(0, QUESTION_BANK.length - windowSize),
+    // Demo only: ignores the JPEG. Grow the unlocked prefix as the worksheet
+    // already has questions (extension pageIndex is often stuck at 0).
+    // Same knownCount → same prefix (stable re-extract); more known → unlock +2.
+    const known = Math.max(0, input.knownCount ?? 0);
+    const count = Math.min(
+      QUESTION_BANK.length,
+      known === 0 ? 3 : Math.min(QUESTION_BANK.length, known + 2),
     );
-    return QUESTION_BANK.slice(start, start + windowSize).map((q, i) => {
-      const index = start + i;
-      const label = composeQuestionLabels([{ label: q.label, text: q.text }])[0] ?? q.label;
+    return QUESTION_BANK.slice(0, count).map((q, index) => {
+      const label =
+        composeQuestionLabels([{ label: q.label, text: q.text }])[0] ?? q.label;
       return {
         id: stableQuestionId(label, q.text),
         index,

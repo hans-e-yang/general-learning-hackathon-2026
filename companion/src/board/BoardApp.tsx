@@ -11,6 +11,8 @@ import { normalizeQuestionLabel } from "@/lib/questionLabel";
 import { subscribeWorksheet } from "@/session/worksheetChannel";
 
 const SESSION_KEY = "circlr-session-uuid";
+/** Clear the spinner if extract never returns (network / model hang). */
+const CAPTURE_PROCESSING_TIMEOUT_MS = 90_000;
 
 function readQuerySessionUuid(): string | null {
   if (typeof window === "undefined") return null;
@@ -90,16 +92,40 @@ function BoardShell({ sessionUuid }: { sessionUuid: string }) {
     movePen,
     moveShape,
   } = useMultiBoardSession();
+  const [captureProcessing, setCaptureProcessing] = useState(false);
 
   useEffect(() => {
-    return subscribeWorksheet(sessionUuid, (qs) => {
-      syncQuestions(
-        qs.map((q) => ({
-          id: q.id,
-          label: normalizeQuestionLabel(q.label, q.index, q.text),
-        })),
-      );
-    });
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const clearBusy = () => {
+      if (timeout) clearTimeout(timeout);
+      timeout = undefined;
+      setCaptureProcessing(false);
+    };
+    const unsub = subscribeWorksheet(
+      sessionUuid,
+      (qs) => {
+        syncQuestions(
+          qs.map((q) => ({
+            id: q.id,
+            label: normalizeQuestionLabel(q.label, q.index, q.text),
+          })),
+        );
+      },
+      {
+        onCaptureProcessing: (busy) => {
+          if (timeout) clearTimeout(timeout);
+          timeout = undefined;
+          setCaptureProcessing(busy);
+          if (busy) {
+            timeout = setTimeout(clearBusy, CAPTURE_PROCESSING_TIMEOUT_MS);
+          }
+        },
+      },
+    );
+    return () => {
+      unsub();
+      if (timeout) clearTimeout(timeout);
+    };
   }, [sessionUuid, syncQuestions]);
 
   const activeLabel =
@@ -124,11 +150,19 @@ function BoardShell({ sessionUuid }: { sessionUuid: string }) {
         shapeKind={shapeKind}
         onShapeKindChange={setShapeKind}
       />
-      <BoardJumpStrip
-        items={questions}
-        activeId={activeQuestionId}
-        onSelect={setActiveQuestionId}
-      />
+      <div className="board-status-row">
+        <BoardJumpStrip
+          items={questions}
+          activeId={activeQuestionId}
+          onSelect={setActiveQuestionId}
+        />
+        {captureProcessing ? (
+          <p className="board-capture-busy" role="status" aria-live="polite">
+            <span className="board-capture-spinner" aria-hidden="true" />
+            Reading capture…
+          </p>
+        ) : null}
+      </div>
       <BoardCarousel
         label={activeLabel}
         canPrev={canPrev}
@@ -136,6 +170,7 @@ function BoardShell({ sessionUuid }: { sessionUuid: string }) {
         onPrev={goPrev}
         onNext={goNext}
         empty={empty}
+        processing={captureProcessing}
       >
         <div className="board-stage">
           <BoardSurface

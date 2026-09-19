@@ -237,8 +237,69 @@ body {
   flex-wrap: wrap;
   align-items: baseline;
   gap: 0.15rem 0.85rem;
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border-bottom: 0;
+}
+
+.board-status-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.35rem 0.85rem;
   padding: 0.45rem 0.95rem 0.35rem;
   border-bottom: 1px solid color-mix(in srgb, var(--paper-line) 70%, transparent);
+  min-height: 1.85rem;
+}
+
+.board-capture-busy {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0;
+  margin-left: auto;
+  color: var(--ink-muted);
+  font-size: 0.78rem;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.board-capture-spinner {
+  width: 0.7rem;
+  height: 0.7rem;
+  border: 1.5px solid color-mix(in srgb, var(--ink-muted) 35%, transparent);
+  border-top-color: var(--ink);
+  border-radius: 999px;
+  animation: board-spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes board-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.board-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.65rem;
+  min-height: 12rem;
+  padding: 2rem 1.25rem;
+  color: var(--ink-muted);
+  font-size: 0.95rem;
+  text-align: center;
+}
+
+.board-empty .board-capture-spinner {
+  width: 1rem;
+  height: 1rem;
 }
 
 .board-jump-item {
@@ -313,17 +374,6 @@ body {
 .board-slide-nav:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
-}
-
-.board-empty {
-  flex: 1;
-  display: grid;
-  place-items: center;
-  min-height: 12rem;
-  padding: 2rem 1.25rem;
-  color: var(--ink-muted);
-  font-size: 0.95rem;
-  text-align: center;
 }
 
 .board-session-error {

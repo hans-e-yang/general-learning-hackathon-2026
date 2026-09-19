@@ -551,7 +551,7 @@ describe("/session/:uuid/material POST -> SSE pipeline (#14/#15)", () => {
     expect(buf).toContain("q-1a");
   });
 
-  it("publishes capture.triaged and skips extraction for a redundant frame (#28)", async () => {
+  it("publishes capture.triaged but still extracts when triage rejects (#28 boards grow)", async () => {
     const rejecting: LLMAdapter = {
       name: "rejecting-triage",
       extract: (input) => fakeAdapter.extract(input),
@@ -598,16 +598,16 @@ describe("/session/:uuid/material POST -> SSE pipeline (#14/#15)", () => {
       }),
       { params: Promise.resolve({ uuid: s.uuid }) }
     );
-    await readUntil((s) => s.includes("event: capture.triaged"));
+    await readUntil((s) => s.includes("event: extraction.update"));
     ctrl.abort();
     reader.cancel();
     expect(buf).toContain("event: capture.triaged");
     expect(buf).toContain(`"update":false`);
     expect(buf).toContain(`"novelty":"none"`);
-    expect(buf).not.toContain("event: extraction.update");
+    expect(buf).toContain("event: extraction.update");
   });
 
-  it("gates extraction on a positive triage verdict (#28)", async () => {
+  it("runs extraction after triage on an accepted capture (#28)", async () => {
     const s = (await (
       await startSession(req("http://test.local/session", { method: "POST" }))
     ).json()) as { uuid: string };

@@ -156,6 +156,28 @@ describe("opencode-adapter/extract", () => {
     });
   });
 
+  it("includes known labels in the extract user prompt when provided", async () => {
+    fetchMock.mockResolvedValueOnce(
+      completion({ questions: [{ label: "4", text: "Exercise 4." }] })
+    );
+    await adapter().extract({
+      captureHash: "h",
+      pageIndex: 0,
+      image: "Zm9v",
+      knownLabels: ["1a", "1b", "1c"],
+    });
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    const parts = body.messages[1].content as Array<Record<string, unknown>>;
+    expect(parts[0]).toMatchObject({
+      type: "text",
+      text: expect.stringContaining("1a, 1b, 1c"),
+    });
+    expect(parts[0]).toMatchObject({
+      type: "text",
+      text: expect.stringContaining("5a and 5b"),
+    });
+  });
+
   it("omits the image part when no capture image is provided", async () => {
     fetchMock.mockResolvedValueOnce(completion({ questions: [] }));
     await adapter().extract({ captureHash: "h", pageIndex: 0 });

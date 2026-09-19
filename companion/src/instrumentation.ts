@@ -4,5 +4,9 @@ export async function register(): Promise<void> {
   }
   const { configureAgentLoop, getAdapter } = await import("@/lib/agent");
   const { publish } = await import("@/lib/session/bus");
-  configureAgentLoop({ adapter: getAdapter(), publishEvent: publish });
+  const adapter = getAdapter();
+  console.info(
+    `[circlr] agent adapter=${adapter.name} (CIRCLR_LLM=${process.env.CIRCLR_LLM ?? "fake"})`,
+  );
+  configureAgentLoop({ adapter, publishEvent: publish });
 }

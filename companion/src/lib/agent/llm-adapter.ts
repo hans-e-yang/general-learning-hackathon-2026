@@ -35,6 +35,10 @@ export interface ExtractInput {
   questionText?: string;
   draftText?: string;
   image?: string;
+  /** How many worksheet questions already exist (fake adapter grows the demo bank). */
+  knownCount?: number;
+  /** Soft titles already on the worksheet (vision extract should still grow past these). */
+  knownLabels?: string[];
 }
 
 export interface PromptMessage {

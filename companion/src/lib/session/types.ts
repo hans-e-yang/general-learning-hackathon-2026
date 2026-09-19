@@ -14,6 +14,8 @@ import type {
 } from "@/lib/contracts";
 
 export const RECENT_HASH_LIMIT = 5;
+/** Same perceptual hash may be re-ingested after this gap so incomplete extracts can catch up on a static PDF view. */
+export const RECAPTURE_COOLDOWN_MS = 20_000;
 
 export type TurnContextInput =
   | { kind: "turn"; turn: TurnRequest }

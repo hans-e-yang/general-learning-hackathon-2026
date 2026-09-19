@@ -2,30 +2,47 @@ import { describe, expect, it } from "vitest";
 import { fakeAdapter } from "./fake-adapter";
 
 describe("fake-adapter/extract", () => {
-  it("returns 2+ labeled questions with stable label-based IDs", async () => {
+  it("returns labeled demo questions with stable label-based IDs", async () => {
     const a = await fakeAdapter.extract({ captureHash: "feedfacec0ffee01", pageIndex: 0 });
     const b = await fakeAdapter.extract({ captureHash: "feedfacec0ffee01", pageIndex: 0 });
     expect(a).toEqual(b);
-    expect(a.length).toBeGreaterThanOrEqual(2);
+    expect(a.map((q) => q.label)).toEqual(["1a", "1b", "1c"]);
     for (const q of a) {
       expect(q.id).toMatch(/^q-[a-z0-9]+$/);
       expect(q.label?.length).toBeGreaterThan(0);
-      expect(q.text.length).toBeGreaterThan(0);
     }
   });
 
-  it("introduces new question IDs on later pages so boards can grow", async () => {
-    const p0 = await fakeAdapter.extract({ captureHash: "feedfacec0ffee01", pageIndex: 0 });
-    const p1 = await fakeAdapter.extract({ captureHash: "feedfacec0ffee01", pageIndex: 1 });
-    const p0Ids = new Set(p0.map((q) => q.id));
-    expect(p1.some((q) => !p0Ids.has(q.id))).toBe(true);
+  it("unlocks later demo labels as knownCount grows (scroll / new captures)", async () => {
+    const first = await fakeAdapter.extract({
+      captureHash: "aaaaaaaaaaaaaaaa",
+      pageIndex: 0,
+      knownCount: 0,
+    });
+    const second = await fakeAdapter.extract({
+      captureHash: "bbbbbbbbbbbbbbbb",
+      pageIndex: 0,
+      knownCount: first.length,
+    });
+    expect(first.map((q) => q.label)).toEqual(["1a", "1b", "1c"]);
+    expect(second.length).toBeGreaterThan(first.length);
+    expect(second.map((q) => q.label)).toContain("1d");
+    expect(second.map((q) => q.label)).toContain("2");
   });
 
-  it("keeps the same IDs for distinct captures of the same page (dedupe-friendly)", async () => {
-    const h1 = await fakeAdapter.extract({ captureHash: "aaaaaaaaaaaaaaaa", pageIndex: 0 });
-    const h2 = await fakeAdapter.extract({ captureHash: "bbbbbbbbbbbbbbbb", pageIndex: 0 });
+  it("keeps the same IDs for the same unlocked prefix (dedupe-friendly)", async () => {
+    const h1 = await fakeAdapter.extract({
+      captureHash: "aaaaaaaaaaaaaaaa",
+      pageIndex: 0,
+      knownCount: 3,
+    });
+    const h2 = await fakeAdapter.extract({
+      captureHash: "bbbbbbbbbbbbbbbb",
+      pageIndex: 0,
+      knownCount: 3,
+    });
     expect(h1.map((q) => q.id)).toEqual(h2.map((q) => q.id));
-    expect(h1.map((q) => q.label)).toEqual(h2.map((q) => q.label));
+    expect(h1.map((q) => q.label)).toEqual(["1a", "1b", "1c", "1d", "2"]);
   });
 });
 

@@ -491,26 +491,40 @@ describe("agent/loop extract (#14)", () => {
     expect(Array.isArray(data?.questions)).toBe(true);
   });
 
-  it("does not duplicate questions on subsequent captures of the same page", async () => {
+  it("does not duplicate questions when extract returns the same ids again", async () => {
     const { publisher } = capture();
-    configureAgentLoop({ adapter: fakeAdapter, publishEvent: publisher });
+    const fixed = [
+      { id: "q-1a", index: 0, text: "Part a", label: "1a" },
+      { id: "q-1b", index: 1, text: "Part b", label: "1b" },
+    ];
+    const stub: LLMAdapter = {
+      ...fakeAdapter,
+      extract: async () => fixed,
+    };
+    configureAgentLoop({ adapter: stub, publishEvent: publisher });
     seedSession("u1");
     await extractFromCapture("u1", "feedfacec0ffee01", 0);
     const firstLen = get("u1")?.worksheet.length;
+    expect(firstLen).toBe(2);
     await extractFromCapture("u1", "feedfacec0ffee01", 0);
     const secondLen = get("u1")?.worksheet.length;
     expect(secondLen).toBe(firstLen);
+    expect(get("u1")?.worksheet.map((q) => q.id)).toEqual(["q-1a", "q-1b"]);
   });
 
-  it("extends the worksheet on captures of new pages", async () => {
+  it("extends the worksheet when later extracts unlock new question ids", async () => {
     const { publisher } = capture();
     configureAgentLoop({ adapter: fakeAdapter, publishEvent: publisher });
     seedSession("u1");
     await extractFromCapture("u1", "feedfacec0ffee01", 0);
     const before = get("u1")?.worksheet.length ?? 0;
-    await extractFromCapture("u1", "feedfacec0ffee01", 1);
+    expect(before).toBe(3);
+    await extractFromCapture("u1", "feedfacec0ffee02", 0);
     const after = get("u1")?.worksheet.length ?? 0;
     expect(after).toBeGreaterThan(before);
+    expect(get("u1")?.worksheet.map((q) => q.label)).toEqual(
+      expect.arrayContaining(["1a", "1b", "1c", "1d", "2"]),
+    );
   });
 });
 

@@ -178,21 +178,27 @@ data: <json>
 3. Server validates with `MaterialCaptureSchema`. The image **must** be a
    FFD8FF-prefixed JPEG (validated in `contracts.ts:base64JpegSchema`). PNG is
    rejected — `shared-board` must call `canvas.toDataURL('image/jpeg')`.
-4. `recordCapture()` in `store.ts` checks the rolling-5 hash window and
-   populates `recentHashes`. Matches skip the rest.
+4. `recordCapture()` in `store.ts` checks the rolling hash window (with a
+   `RECAPTURE_COOLDOWN_MS` same-hash retry) and populates `recentHashes`.
+   Fresh hashes (or cooled-down repeats) continue; cool duplicates skip.
 5. On a non-deduped capture the route publishes `material.accepted` and runs:
    - `triageOnCapture` → `adapter.triage()` decides whether this frame carries
-     new context; publishes `capture.triaged`. On `update:false` extraction is
-     skipped (see §12.1); the watcher still runs.
-   - `extractFromCapture` (only when triage accepts) → appends new questions to
-     the worksheet, publishes `extraction.update {partial:false on first
-     capture, true afterwards}`.
+     new context; publishes `capture.triaged`. Triage is advisory for the UI —
+     extraction still runs so boards can grow when the model under-reports
+     novelty (see §12.1).
+   - `extractFromCapture` → appends new questions to the worksheet, publishes
+     `extraction.update {partial:false on first capture, true afterwards}`.
    - `assessAllDrafts` → for every non-empty draft, publishes `assessment.tick`.
    - `watchOnCapture` → `adapter.watch()` → on `flag`, increments
      `ghostCounts[ghostKey]` and (if `count ≤ SILENT_THRESHOLD=2`) appends a
      `tutor.turn` to the question's thread. Always publishes `flag`.
 6. The companion pane renders new `capture.triaged`, `extraction.update`,
    `assessment.tick`, and `tutor.turn` events from `/events`.
+
+Same-hash captures are deduped for `RECAPTURE_COOLDOWN_MS` (20s), then allowed
+again so a static PDF view can finish extracting trailing exercises. The
+extension also force-uploads about every 20s even when the frame looks
+unchanged.
 
 ### 7.3 Student asks for a hint / reflection
 
@@ -312,7 +318,7 @@ endpoint it always did.
 | #20 | Resume: localStorage uuid + refresh survival | `GET /session/[uuid]/route.ts`; `drafts` in `SessionSnapshot` |
 | #22 | Watcher loop: checkpoint → vision check → flag | `watch()` on the adapter; `watchOnCapture` in `loop.ts`; `flag` SSE event |
 | #23 | Intervention ladder: Flag → Hint → Silent (fading) + IDK | recurrence in `watchOnCapture`, `idk()` on the adapter, `turn.kind:"idk"`, `ghostSummary` in `SessionSnapshot` |
-| #28 | Capture triage: small vision agent gates context updates | `triage()` on the adapter, `triageOnCapture` in `loop.ts`, `capture.triaged` SSE event |
+| #28 | Capture triage: novelty signal on each capture (extract always runs) | `triage()` on the adapter, `triageOnCapture` in `loop.ts`, `capture.triaged` SSE event |
 | #29 | Scout-first assessment with conditional Tutor escalation | `turn.kind:"assess"`, `ScoutVerdict.escalate`, `assess` branch in `processTurn` |
 
 ## 10. What other branches need from this surface
@@ -350,20 +356,26 @@ Both extensions are implemented. Contract shapes live in `contracts.ts` and
 
 ### 12.1 Capture triage (#28)
 
-Hash dedupe only rejects byte-identical frames, so an overlapping scroll would
-otherwise re-ingest known questions. After `material.accepted`, the route runs a
-small vision agent (`adapter.triage`) that compares the capture against a digest
-of the session's current context and returns:
+Hash dedupe rejects near-identical frames for a short cooldown. After
+`material.accepted`, the route runs a small vision agent (`adapter.triage`) that
+compares the capture against a digest of the session's current context and
+returns:
 
 ```
 TriageVerdict { update: boolean, reason: string, novelty?: "new-questions" | "new-material" | "none" }
 ```
 
-- `update:false` → publish `capture.triaged` and skip `extractFromCapture`. The
-  watcher (`watchOnCapture`) **still runs**: it inspects the student's visible
-  work, which is independent of whether the document text is new.
-- `update:true` → publish `capture.triaged`, then run the existing extract step.
-- Adapter error fails open (`update:true`) so ingestion never silently stops.
+- Always publish `capture.triaged` with the verdict (including `update:false`).
+- **Always run `extractFromCapture` next** — triage is informational for the UI
+  and context log. Worksheet growth must not depend on the model noticing every
+  new printed label (false `update:false` used to strand boards mid-page).
+- The watcher (`watchOnCapture`) still runs independently.
+- Adapter error on triage fails open (`update:true`) so ingestion never silently
+  stops.
+
+Same perceptual hash may be re-ingested after `RECAPTURE_COOLDOWN_MS` so a
+static frame can retry extraction. The Chrome extension force-uploads on a
+fixed cadence even when Hamming dedupe would skip.
 
 The SSE event always carries `captureId`, `update`, and `reason`; `novelty` is
 present when the triage model supplies it.
@@ -374,7 +386,7 @@ Timeline delta:
 |-- POST /session/<uuid>/material>| (capture accepted)
 |                                |--> triage(capture, contextDigest) -->|
 |                                |<-- TriageVerdict -------------------|
-|<-- capture.triaged (id=N) -----|   update:false ? skip extract : extract
+|<-- capture.triaged (id=N) -----|
 |                                |--> extract(capture) ---------------->|
 |                                |--> watch(capture) ------------------>|
 ```

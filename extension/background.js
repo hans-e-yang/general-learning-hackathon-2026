@@ -23,6 +23,8 @@ import { companionUrl, hydrate, ingest, igniteSession, newSessionState } from ".
 import { HAMMING_THRESHOLD, isDuplicate, RECENT_HASH_LIMIT } from "./hash.js";
 import { processCapture } from "./capture-image.js";
 export const CAPTURE_INTERVAL_MS = 2_000;
+/** Every N ticks, upload even a near-duplicate frame so incomplete extracts can catch trailing exercises. */
+export const FORCE_RECAPTURE_EVERY = 10;
 // MV3 keepalive/watchdog (see header). 20s < the 30s idle timeout; 0.5min is
 // chrome.alarms' minimum period.
 const KEEPALIVE_MS = 20_000;
@@ -41,6 +43,7 @@ let capturing = false;
 let captureChain = Promise.resolve();
 // Rolling dedupe window, oldest first: identical frames are not re-uploaded.
 const recentHashes = [];
+let captureTicks = 0;
 async function readCapturing() {
     try {
         const { [CAPTURING_KEY]: on } = await chrome.storage.session.get(CAPTURING_KEY);
@@ -104,10 +107,17 @@ async function captureActiveTab() {
         return; // e.g. protected chrome:// pages can't be captured
     }
     const { image, hash } = await processCapture(raw);
+    captureTicks += 1;
+    const forceRecapture = captureTicks % FORCE_RECAPTURE_EVERY === 0;
     // Drop near-identical frames so a static page does not re-upload every tick.
-    if (isDuplicate(hash, recentHashes, HAMMING_THRESHOLD)) {
+    // Periodically force a pass anyway — vision extract can miss trailing exercises
+    // on the first look, and a frozen PDF view would otherwise never retry.
+    if (!forceRecapture && isDuplicate(hash, recentHashes, HAMMING_THRESHOLD)) {
         console.log("[capture] duplicate frame; skipping upload");
         return;
+    }
+    if (forceRecapture) {
+        console.log("[capture] forced re-upload for extract catch-up");
     }
     recentHashes.push(hash);
     if (recentHashes.length > RECENT_HASH_LIMIT)
@@ -150,6 +160,7 @@ function startCapturing() {
 // is opened again.
 function stopCapturing() {
     capturing = false;
+    captureTicks = 0;
     void writeCapturing(false);
     if (captureTimer !== null) {
         clearInterval(captureTimer);
