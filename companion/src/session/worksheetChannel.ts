@@ -6,7 +6,6 @@ export type WorksheetListener = (questions: WorksheetQuestion[]) => void;
 
 export type SubscribeWorksheetOptions = {
   baseUrl?: string;
-  onError?: () => void;
 };
 
 const ExtractionDataSchema = z.object({
@@ -65,9 +64,6 @@ export function subscribeWorksheet(
   source.addEventListener("extraction.update", (ev) => {
     handle("extraction.update", (ev as MessageEvent).data);
   });
-  source.onerror = () => {
-    options?.onError?.();
-  };
 
   return () => source.close();
 }

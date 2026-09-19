@@ -42,8 +42,23 @@ async function mintSessionUuid(): Promise<string> {
   return data.uuid;
 }
 
+async function sessionExists(uuid: string): Promise<boolean> {
+  try {
+    const res = await fetch(`/session/${uuid}`);
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+function writeSessionToUrl(uuid: string): void {
+  const url = new URL(window.location.href);
+  url.searchParams.set("s", uuid);
+  window.history.replaceState({}, "", url.toString());
+  window.dispatchEvent(new Event("popstate"));
+}
+
 function BoardShell({ sessionUuid }: { sessionUuid: string }) {
-  const [sseError, setSseError] = useState<string | null>(null);
   const {
     questions,
     activeQuestionId,
@@ -77,25 +92,14 @@ function BoardShell({ sessionUuid }: { sessionUuid: string }) {
   } = useMultiBoardSession();
 
   useEffect(() => {
-    setSseError(null);
-    return subscribeWorksheet(
-      sessionUuid,
-      (qs) => {
-        syncQuestions(
-          qs.map((q) => ({
-            id: q.id,
-            label: normalizeQuestionLabel(q.label, q.index, q.text),
-          })),
-        );
-      },
-      {
-        onError: () => {
-          setSseError(
-            "Cannot reach this Session’s events stream. Open Companion from the extension side panel so ?s= matches the capture Session.",
-          );
-        },
-      },
-    );
+    return subscribeWorksheet(sessionUuid, (qs) => {
+      syncQuestions(
+        qs.map((q) => ({
+          id: q.id,
+          label: normalizeQuestionLabel(q.label, q.index, q.text),
+        })),
+      );
+    });
   }, [sessionUuid, syncQuestions]);
 
   const activeLabel =
@@ -120,11 +124,6 @@ function BoardShell({ sessionUuid }: { sessionUuid: string }) {
         shapeKind={shapeKind}
         onShapeKindChange={setShapeKind}
       />
-      {sseError ? (
-        <p className="board-session-error" role="alert">
-          {sseError}
-        </p>
-      ) : null}
       <BoardJumpStrip
         items={questions}
         activeId={activeQuestionId}
@@ -172,29 +171,30 @@ export function BoardApp() {
     getSessionSnapshot,
     getServerSnapshot,
   );
-  const [mintedUuid, setMintedUuid] = useState<string | null>(null);
-  const [mintError, setMintError] = useState<string | null>(null);
+  const [resolvedUuid, setResolvedUuid] = useState<string | null>(null);
+  const [bootError, setBootError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (queryUuid) {
-      window.localStorage.setItem(SESSION_KEY, queryUuid);
-      setMintedUuid(null);
-      return;
-    }
     let cancelled = false;
     void (async () => {
       try {
-        const existing = window.localStorage.getItem(SESSION_KEY);
-        const uuid = existing ?? (await mintSessionUuid());
+        setBootError(null);
+        // Prefer ?s= from the extension; verify it still exists (dev server restarts wipe memory).
+        if (queryUuid && (await sessionExists(queryUuid))) {
+          if (cancelled) return;
+          window.localStorage.setItem(SESSION_KEY, queryUuid);
+          setResolvedUuid(queryUuid);
+          return;
+        }
+        // Stale ?s= or no query: mint a live Session on this server.
+        const uuid = await mintSessionUuid();
         if (cancelled) return;
         window.localStorage.setItem(SESSION_KEY, uuid);
-        const url = new URL(window.location.href);
-        url.searchParams.set("s", uuid);
-        window.history.replaceState({}, "", url.toString());
-        setMintedUuid(uuid);
+        writeSessionToUrl(uuid);
+        setResolvedUuid(uuid);
       } catch (err) {
         if (!cancelled) {
-          setMintError(
+          setBootError(
             err instanceof Error ? err.message : "Failed to start a Session",
           );
         }
@@ -205,21 +205,19 @@ export function BoardApp() {
     };
   }, [queryUuid]);
 
-  const sessionUuid = queryUuid ?? mintedUuid;
-
-  if (mintError) {
+  if (bootError) {
     return (
       <div className="board-app">
         <p className="board-session-error" role="alert">
-          {mintError}
+          {bootError}
         </p>
       </div>
     );
   }
 
-  if (!sessionUuid) {
+  if (!resolvedUuid) {
     return <div className="board-app" aria-busy="true" />;
   }
 
-  return <BoardShell sessionUuid={sessionUuid} />;
+  return <BoardShell sessionUuid={resolvedUuid} />;
 }
