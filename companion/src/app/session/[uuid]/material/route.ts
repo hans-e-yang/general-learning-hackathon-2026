@@ -34,12 +34,12 @@ export async function POST(
       type: "material.accepted",
       data: { captureId, deduped: false },
     });
-    await extractFromCapture(uuid, parsed.data.hash, parsed.data.pageIndex);
+    await extractFromCapture(uuid, parsed.data.hash, parsed.data.pageIndex, parsed.data.image);
     await assessAllDrafts(uuid, {
       captureHash: parsed.data.hash,
       pageIndex: parsed.data.pageIndex,
     });
-    await watchOnCapture(uuid, parsed.data.hash, parsed.data.pageIndex);
+    await watchOnCapture(uuid, parsed.data.hash, parsed.data.pageIndex, parsed.data.image);
   }
   return Response.json({ accepted: true, deduped, captureId }, { status: 202 });
 }

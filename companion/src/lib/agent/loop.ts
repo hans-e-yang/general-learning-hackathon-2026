@@ -48,12 +48,17 @@ function nextLevel(history: TutorTurn[], requestedLevel: number): number {
   return clampLevel(last);
 }
 
-export async function extractFromCapture(uuid: string, captureHash: string, pageIndex: number): Promise<void> {
+export async function extractFromCapture(
+  uuid: string,
+  captureHash: string,
+  pageIndex: number,
+  image?: string
+): Promise<void> {
   await withLock(uuid, async () => {
     const state = get(uuid);
     if (!state) return;
     const { adapter, publishEvent } = depsOrDefault();
-    const input: ExtractInput = { captureHash, pageIndex };
+    const input: ExtractInput = { captureHash, pageIndex, image };
     const extracted = await adapter.extract(input);
 
     let inserted = 0;
@@ -74,7 +79,8 @@ export async function extractFromCapture(uuid: string, captureHash: string, page
 export async function watchOnCapture(
   uuid: string,
   captureHash: string,
-  pageIndex: number
+  pageIndex: number,
+  image?: string
 ): Promise<WatchVerdict | undefined> {
   let verdict: WatchVerdict | undefined;
   await withLock(uuid, async () => {
@@ -88,6 +94,7 @@ export async function watchOnCapture(
       pageIndex,
       questionText: q?.text,
       draftText: draft,
+      image,
     };
     verdict = await adapter.watch(input);
     if (!verdict.flag) return;

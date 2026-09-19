@@ -1,3 +1,4 @@
+import { looksLikeFinalAnswer } from "./answer-guard";
 import type {
   ExtractInput,
   ExtractedQuestion,
@@ -12,17 +13,6 @@ import type {
   WatchSeverity,
   WatchVerdict,
 } from "./llm-adapter";
-
-const FINAL_ANSWER_PATTERNS = [
-  /^\s*the answer is\b/i,
-  /\banswer\s*[:=]\s*\S/i,
-  /\bfinal answer\b/i,
-  /\bcorrect answer is\b/i,
-];
-
-function looksLikeFinalAnswer(text: string): boolean {
-  return FINAL_ANSWER_PATTERNS.some((p) => p.test(text));
-}
 
 const HINT_LADDER = [
   "What part of the question is unclear? Try reading it again out loud.",
