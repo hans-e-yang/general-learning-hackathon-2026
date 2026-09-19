@@ -344,12 +344,16 @@ export class OpenCodeAdapter implements LLMAdapter {
   async scout(input: ScoutInput): Promise<ScoutVerdict> {
     const question = (input.questionText ?? "").trim() || "(question text unavailable)";
     const draft = (input.draftText ?? "").trim() || "(no attempt yet)";
+    const instruction = `Question:\n${question}\n\nStudent draft:\n${draft}`;
     const data = await this.jsonCall(
       [
         { role: "system", content: SCOUT_SYSTEM },
-        { role: "user", content: `Question:\n${question}\n\nStudent draft:\n${draft}` },
+        { role: "user", content: userContent(instruction, input.image) },
       ],
-      { model: this.textModel(), maxTokens: 600 },
+      {
+        model: input.image ? this.visionModel() : this.textModel(),
+        maxTokens: input.image ? VISION_MAX_TOKENS : 600,
+      },
       ScoutResultSchema
     );
     return {
@@ -388,14 +392,22 @@ export class OpenCodeAdapter implements LLMAdapter {
       `Prior turns:\n${history}`,
     ];
     if (input.message) lines.push(`Student asks:\n${input.message}`);
+    if (input.image) {
+      lines.push(
+        "The student's work is attached as an image; ground your question in what it actually shows."
+      );
+    }
 
     const messages: ChatMessage[] = [
       { role: "system", content: TUTOR_SYSTEM },
-      { role: "user", content: lines.join("\n\n") },
+      { role: "user", content: userContent(lines.join("\n\n"), input.image) },
     ];
     const data = await this.jsonCall(
       messages,
-      { model: this.textModel(), maxTokens: 900 },
+      {
+        model: input.image ? this.visionModel() : this.textModel(),
+        maxTokens: input.image ? VISION_MAX_TOKENS : 900,
+      },
       TutorResultSchema
     );
     input.onPrompt?.(toPromptMessages(messages));
@@ -439,11 +451,14 @@ export class OpenCodeAdapter implements LLMAdapter {
     const question = (input.questionText ?? "").trim() || "(question text unavailable)";
     const messages: ChatMessage[] = [
       { role: "system", content: IDK_SYSTEM },
-      { role: "user", content: `Question:\n${question}` },
+      { role: "user", content: userContent(`Question:\n${question}`, input.image) },
     ];
     const data = await this.jsonCall(
       messages,
-      { model: this.textModel(), maxTokens: 600 },
+      {
+        model: input.image ? this.visionModel() : this.textModel(),
+        maxTokens: input.image ? VISION_MAX_TOKENS : 600,
+      },
       IdkResultSchema
     );
     input.onPrompt?.(toPromptMessages(messages));

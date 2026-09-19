@@ -106,6 +106,39 @@ describe("contracts: TurnRequest", () => {
   it("rejects an unknown kind", () => {
     expect(TurnRequestSchema.safeParse({ kind: "nope" }).success).toBe(false);
   });
+
+  it("accepts an optional image on the five conversational kinds", () => {
+    const kinds = [
+      { kind: "saveDraft", questionId: "q1", draft: "x" },
+      { kind: "requestCheck", questionId: "q1" },
+      { kind: "assess", questionId: "q1" },
+      { kind: "ask", questionId: "q1", message: "why?" },
+      { kind: "idk", questionId: "q1" },
+    ] as const;
+    for (const turn of kinds) {
+      expect(TurnRequestSchema.safeParse({ ...turn, image: FIXTURE_JPEG_B64 }).success).toBe(
+        true
+      );
+      expect(TurnRequestSchema.safeParse(turn).success).toBe(true);
+    }
+  });
+
+  it("rejects a non-JPEG image on a turn", () => {
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).toString("base64");
+    expect(
+      TurnRequestSchema.safeParse({ kind: "requestCheck", questionId: "q1", image: png }).success
+    ).toBe(false);
+  });
+
+  it("does not retain an image on setMode (not a conversational kind)", () => {
+    const parsed = TurnRequestSchema.safeParse({
+      kind: "setMode",
+      mode: "review",
+      image: FIXTURE_JPEG_B64,
+    });
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && "image" in parsed.data).toBe(false);
+  });
 });
 
 describe("contracts: board turns", () => {

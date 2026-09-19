@@ -148,11 +148,33 @@ const boardTextElement = z.object({
 
 export const TurnRequestSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("setMode"), mode: ModeSchema }),
-  z.object({ kind: z.literal("saveDraft"), questionId: z.string(), draft: z.string() }),
-  z.object({ kind: z.literal("requestCheck"), questionId: z.string() }),
-  z.object({ kind: z.literal("assess"), questionId: z.string() }),
-  z.object({ kind: z.literal("ask"), questionId: z.string(), message: z.string().min(1) }),
-  z.object({ kind: z.literal("idk"), questionId: z.string() }),
+  z.object({
+    kind: z.literal("saveDraft"),
+    questionId: z.string(),
+    draft: z.string(),
+    image: base64JpegSchema.optional(),
+  }),
+  z.object({
+    kind: z.literal("requestCheck"),
+    questionId: z.string(),
+    image: base64JpegSchema.optional(),
+  }),
+  z.object({
+    kind: z.literal("assess"),
+    questionId: z.string(),
+    image: base64JpegSchema.optional(),
+  }),
+  z.object({
+    kind: z.literal("ask"),
+    questionId: z.string(),
+    message: z.string().min(1),
+    image: base64JpegSchema.optional(),
+  }),
+  z.object({
+    kind: z.literal("idk"),
+    questionId: z.string(),
+    image: base64JpegSchema.optional(),
+  }),
   z.object({ kind: z.literal("board-pen"), element: boardPenElement }),
   z.object({ kind: z.literal("board-shape"), element: boardShapeElement }),
   z.object({ kind: z.literal("board-text"), element: boardTextElement }),

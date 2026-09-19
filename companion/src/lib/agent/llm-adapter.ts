@@ -25,6 +25,8 @@ export interface ScoutInput {
   pageIndex: number;
   questionText?: string;
   draftText?: string;
+  /** Optional student-work snapshot attached to this turn. */
+  image?: string;
 }
 
 export interface ExtractInput {
@@ -50,6 +52,8 @@ export interface TutorInput {
   threadHistory: TutorTurn[];
   currentLevel: number;
   captureHash?: string;
+  /** Optional student-work snapshot attached to this turn. */
+  image?: string;
   onPrompt?: PromptSink;
 }
 
@@ -66,6 +70,8 @@ export interface IdkInput {
   questionId: string;
   questionText: string;
   draftText?: string;
+  /** Optional student-work snapshot attached to this turn. */
+  image?: string;
   onPrompt?: PromptSink;
 }
 

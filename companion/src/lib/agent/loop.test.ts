@@ -199,6 +199,8 @@ describe("agent/loop context memory", () => {
     const state = get("u1")!;
     expect(state.context).toHaveLength(1);
     const [entry] = state.context;
+    expect(entry.kind).toBe("tutor");
+    if (entry.kind !== "tutor") throw new Error("expected tutor entry");
     expect(entry.input).toEqual({ kind: "turn", turn });
     expect(entry.questionId).toBe("q1");
     expect(entry.prompt.map((m) => m.role)).toEqual(["system", "user"]);
@@ -210,7 +212,42 @@ describe("agent/loop context memory", () => {
     expect(entry.output).toEqual(state.threads.q1[0]);
   });
 
-  it("does not record context for setMode or saveDraft", async () => {
+  it("records the whole conversation: extraction, answer, assessment, tutor", async () => {
+    const { publisher } = capture();
+    configureAgentLoop({ adapter: fakeAdapter, publishEvent: publisher });
+    seedSession("u1");
+
+    await extractFromCapture("u1", "feedfacec0ffee01", 0);
+    const extracted = get("u1")!.worksheet;
+    expect(extracted.length).toBeGreaterThan(0);
+    const qid = extracted[0].id;
+
+    await processTurn("u1", { kind: "saveDraft", questionId: qid, draft: "my attempt, therefore" });
+    await processTurn("u1", { kind: "requestCheck", questionId: qid });
+
+    const kinds = get("u1")!.context.map((c) => c.kind);
+    // extraction (question) -> draft (student answer) -> tutor (hint) -> draft (post-check tick)
+    expect(kinds).toEqual(["extraction", "draft", "tutor", "draft"]);
+
+    const extraction = get("u1")!.context[0];
+    if (extraction.kind !== "extraction") throw new Error("expected extraction");
+    expect(extraction.questions.map((q) => q.id)).toContain(qid);
+  });
+
+  it("records a capture entry with its triage verdict", async () => {
+    const { publisher } = capture();
+    configureAgentLoop({ adapter: fakeAdapter, publishEvent: publisher });
+    seedSession("u1");
+
+    await triageOnCapture("u1", "cap-1", "feedfacec0ffee01", 0);
+
+    const captures = get("u1")!.context.filter((c) => c.kind === "capture");
+    expect(captures).toHaveLength(1);
+    expect(captures[0]).toMatchObject({ kind: "capture", captureId: "cap-1", pageIndex: 0 });
+    expect(captures[0].triage?.reason.length).toBeGreaterThan(0);
+  });
+
+  it("does not record context for setMode (no conversational event)", async () => {
     const { publisher } = capture();
     configureAgentLoop({ adapter: fakeAdapter, publishEvent: publisher });
     seedSession("u1", {
@@ -218,9 +255,29 @@ describe("agent/loop context memory", () => {
     });
 
     await processTurn("u1", { kind: "setMode", mode: "review" });
-    await processTurn("u1", { kind: "saveDraft", questionId: "q1", draft: "hello" });
 
     expect(get("u1")?.context).toHaveLength(0);
+  });
+
+  it("records the student answer and its assessment on saveDraft", async () => {
+    const { publisher } = capture();
+    configureAgentLoop({ adapter: fakeAdapter, publishEvent: publisher });
+    seedSession("u1", {
+      worksheet: [{ id: "q1", index: 0, text: "x", status: "blocked" }],
+    });
+
+    await processTurn("u1", { kind: "saveDraft", questionId: "q1", draft: "hello" });
+
+    const state = get("u1")!;
+    const drafts = state.context.filter((c) => c.kind === "draft");
+    expect(drafts).toHaveLength(1);
+    expect(drafts[0]).toMatchObject({
+      kind: "draft",
+      questionId: "q1",
+      draft: "hello",
+      questionText: "x",
+    });
+    expect(drafts[0].assessment?.reasoning.length).toBeGreaterThan(0);
   });
 
   it("records a context entry for an idk turn", async () => {
@@ -235,6 +292,99 @@ describe("agent/loop context memory", () => {
     const state = get("u1")!;
     expect(state.context).toHaveLength(1);
     expect(state.context[0].output).toEqual(state.threads.q1[0]);
+  });
+});
+
+describe("agent/loop image turns", () => {
+  const IMG = "data:image/jpeg;base64,/9j/AAAA";
+
+  it("threads the turn image into scout and records it on the draft entry", async () => {
+    const seen: Array<string | undefined> = [];
+    const { publisher } = capture();
+    configureAgentLoop({
+      adapter: stubAdapter({
+        scout: async (input) => {
+          seen.push(input.image);
+          return { status: "on-track", reasoning: "ok", escalate: true };
+        },
+      }),
+      publishEvent: publisher,
+    });
+    seedSession("u1", {
+      worksheet: [{ id: "q1", index: 0, text: "x", status: "blocked" }],
+    });
+
+    await processTurn("u1", { kind: "saveDraft", questionId: "q1", draft: "attempt", image: IMG });
+
+    expect(seen).toEqual([IMG]);
+    const draft = get("u1")!.context.find((c) => c.kind === "draft");
+    expect(draft?.image).toBe(IMG);
+  });
+
+  it("threads the turn image into tutor and records it on the tutor material", async () => {
+    const seen: Array<string | undefined> = [];
+    const { publisher } = capture();
+    configureAgentLoop({
+      adapter: stubAdapter({
+        tutor: async (input) => {
+          seen.push(input.image);
+          return { questionId: input.questionId, hint: "hint", level: 0, escalation: "same" };
+        },
+      }),
+      publishEvent: publisher,
+    });
+    seedSession("u1", {
+      worksheet: [{ id: "q1", index: 0, text: "x", status: "blocked" }],
+    });
+
+    await processTurn("u1", { kind: "requestCheck", questionId: "q1", image: IMG });
+
+    expect(seen[0]).toBe(IMG);
+    const tutor = get("u1")!.context.find((c) => c.kind === "tutor");
+    if (tutor?.kind !== "tutor") throw new Error("expected tutor entry");
+    expect(tutor.material.image).toBe(IMG);
+  });
+
+  it("threads the turn image into idk", async () => {
+    let seen: string | undefined;
+    const { publisher } = capture();
+    configureAgentLoop({
+      adapter: stubAdapter({
+        idk: async (input) => {
+          seen = input.image;
+          return { questionId: input.questionId, hint: "hint", level: 0, escalation: "same" };
+        },
+      }),
+      publishEvent: publisher,
+    });
+    seedSession("u1", {
+      worksheet: [{ id: "q1", index: 0, text: "x", status: "blocked" }],
+    });
+
+    await processTurn("u1", { kind: "idk", questionId: "q1", image: IMG });
+
+    expect(seen).toBe(IMG);
+  });
+
+  it("does not attach an image when the turn omits it", async () => {
+    const seen: Array<string | undefined> = [];
+    const { publisher } = capture();
+    configureAgentLoop({
+      adapter: stubAdapter({
+        scout: async (input) => {
+          seen.push(input.image);
+          return { status: "on-track", reasoning: "ok", escalate: true };
+        },
+      }),
+      publishEvent: publisher,
+    });
+    seedSession("u1", {
+      worksheet: [{ id: "q1", index: 0, text: "x", status: "blocked" }],
+    });
+
+    await processTurn("u1", { kind: "saveDraft", questionId: "q1", draft: "attempt" });
+
+    expect(seen).toEqual([undefined]);
   });
 });
 
