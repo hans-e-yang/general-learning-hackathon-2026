@@ -26,12 +26,12 @@ Circa exists so students can submit **anything they already do** — homework, a
 
 ## What Circa is
 
-A two-mode loop:
+A two-mode loop. The modes differ in exactly one thing — **when Circa is allowed to speak**:
 
 1. **You work in your own knowledge.** No answer dump before you try.
 2. **Circa finds the quiet error** — misconception, slip, or hidden assumption.
-3. **Practice Mode walks the method step by step** until the same trap cannot fire again.
-4. **Exam Mode autopsies a full submission**, then turns those fingerprints into a study path and a schedule.
+3. **Practice Mode watches you work live on the canvas** and speaks only at checkpoints, walking the method step by step until the same trap cannot fire again.
+4. **Exam Mode is silent until you submit the whole paper**, then autopsies it and turns those fingerprints into a study path and a schedule.
 
 The unit of learning is not “Chapter 4.” It is **this assumption, in your handwriting, on this kind of item.**
 
@@ -39,19 +39,22 @@ The unit of learning is not “Chapter 4.” It is **this assumption, in your ha
 
 ## Two modes
 
-### 1. Practice Mode — circle to practice
+### 1. Practice Mode — work live, get caught in the act
 
-Upload notes, a slide, a worksheet, or a single question. **Circle the region you want to own** — a formula, a diagram, a mark-scheme line, a paragraph you keep misreading.
+Pick a question, or circle a patch from your own notes — a formula, a mark-scheme line, a paragraph you keep misreading — and Circa drills you on *that* patch, not the whole chapter.
 
-Circa then:
+Then you work it **live on the canvas**, in your own handwriting. No answer dump before you try. A watcher loop reads your working at each **checkpoint** — pen-up, line-end, never mid-stroke — and speaks only when it is confident and the slip is severe:
 
-- Generates a short drill from *that* circled patch, not the whole chapter.
-- Watches *how* you solve, not only whether the box is right.
-- Stops you at the first hidden assumption (“you treated the root as principal without stating it”).
-- Unlocks the next step only after you attempt the current one.
-- Replays the correct method as a sequence of **required moves**, so “I kind of get it” cannot hide.
+- **Flag** — "Check line 3. What did you assume there?"
+- **Hint** — one Socratic nudge aimed at the exact step. Never the answer.
+- **Silent** — for ghosts you have already been caught on, Circa watches, says nothing, and confesses at the session autopsy: *"I saw it. You didn't. That's the one to fix."*
+- **IDK button** — the escape hatch. Press it and get the *smallest* unblock, not the solution. The press itself is logged as a struggle.
 
-Circle → attempt → get caught → retry the same trap in a new skin.
+The next step unlocks only after you attempt the current one, and the correct method replays as a sequence of **required moves**, so "I kind of get it" cannot hide.
+
+Interventions fade as your fingerprint clears: the goal is an AI that interrupts you less every week.
+
+Circle → work live → get caught → retry the same trap in a new skin.
 
 This is the daily loop.
 
@@ -90,7 +93,7 @@ That fingerprint is the product:
 - A replay: scrub backward through your solution until the ghost appears.
 - A kill condition: the ghost is not “reviewed.” It is **extinct** only after you survive it in Practice Mode, on a transfer item, without Circa prompting the premise.
 
-This is what we show in the 2-minute demo: a paper that looks almost right, then the ghosts turn on.
+This is what we show in the 2-minute demo: a solution that looks almost right, then the ghosts turn on — live, while the student is still working.
 
 ---
 
@@ -122,13 +125,13 @@ If Circa ever dumps a full worked solution before you have tried, it is broken.
 
 ## Demo story (2 minutes)
 
-1. A student submits a mechanics past paper. Score looks fine except two “careless” marks.
-2. Ghosts on: *assumed u = 0*, *cancelled (x − 2) without stating x ≠ 2*.
-3. Flip to Practice Mode. Circa has already circled those two patches.
-4. Guided steps; Reveal locked; a transfer item with different numbers.
-5. Scheduler: those two ghosts return in 1 day and 3 days. The rest of the paper does not get restudied.
+1. Chris works an integration question **live on the canvas**. The camera never leaves the screen.
+2. He drops a negative — his signature slip. Circa flags at the checkpoint: ghost on, pinned to the exact line.
+3. He stalls and hits **IDK**. Circa gives the smallest unblock: one question about the step, not the answer.
+4. He fixes it and finishes. Session autopsy: two ghosts, one he has been caught on before — this time Circa stayed silent until the end.
+5. Fingerprint view: recurrence count, next drill already scheduled.
 
-The punchline: **the student did not lack the chapter. They lacked a witness for the assumption.**
+The punchline: **the student did not lack the chapter. They lacked a witness for the assumption.** And the witness talks less every week.
 
 ---
 
@@ -158,6 +161,6 @@ anything you already do
 - Track: Automate Studies
 - Problem: carelessness and implicit assumptions that students cannot see in their own work
 - Scope: practices, past papers, assignments, homework — any submission
-- Stack: TBD during the 24 hours (web app + vision + structured LLM output)
+- Stack: Next.js + TypeScript. One multimodal model reads canvas checkpoints (`canvas.toDataURL()`) and returns structured JSON. The watcher loop is **event-gated** (pen-up / line-end), not fixed polling — cheap enough to run for hours, fast enough to catch the slip while it is still wet.
 
 Built so a real tutor can read student state — including the premises they never wrote down — and choose what to teach next.
