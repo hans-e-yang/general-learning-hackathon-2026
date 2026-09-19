@@ -1,0 +1,256 @@
+import type { BoardAnnotationTurn } from "@/contracts/board";
+import { looksLikeFinalAnswer } from "./answer-guard";
+import type {
+  AnnotateInput,
+  AssessmentStatus,
+  ExtractInput,
+  ExtractedQuestion,
+  HintEscalation,
+  IdkInput,
+  LLMAdapter,
+  PromptMessage,
+  ScoutInput,
+  ScoutVerdict,
+  TriageInput,
+  TriageVerdict,
+  TutorInput,
+  TutorTurn,
+  WatchInput,
+  WatchSeverity,
+  WatchVerdict,
+} from "./llm-adapter";
+
+const HINT_LADDER = [
+  "What part of the question is unclear? Try reading it again out loud.",
+  "What assumption are you making here? Name it before you continue.",
+  "Try working the problem from the definition. What does each symbol mean?",
+  "Walk me through each step. Do not yet write your final sentence.",
+];
+
+const TUTOR_SYSTEM =
+  "You are a Socratic tutor inside a study companion. (fake adapter)";
+const IDK_SYSTEM = 'A student pressed "I don\'t know". (fake adapter)';
+
+function promptPair(system: string, user: string): PromptMessage[] {
+  return [
+    { role: "system", content: system },
+    { role: "user", content: user },
+  ];
+}
+
+const MIN_LEVEL = 0;
+const MAX_LEVEL = 3;
+
+function clampLevel(n: number): number {
+  if (n < MIN_LEVEL) return MIN_LEVEL;
+  if (n > MAX_LEVEL) return MAX_LEVEL;
+  return n;
+}
+
+function hash32(s: string): number {
+  let h = 0;
+  for (let i = 0; i < s.length; i += 1) {
+    h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+  }
+  return h >>> 0;
+}
+
+function scoutDraft(input: ScoutInput): { status: AssessmentStatus; reasoning: string } {
+  const draft = (input.draftText ?? "").trim();
+  if (draft.length === 0) {
+    return {
+      status: "blocked",
+      reasoning: "no attempt yet; the student has not typed anything",
+    };
+  }
+  const lower = draft.toLowerCase();
+  if (draft.length < 12) {
+    return {
+      status: "blocked",
+      reasoning: "draft is too short to evaluate",
+    };
+  }
+  if (looksLikeFinalAnswer(draft)) {
+    return {
+      status: "blocked",
+      reasoning: "draft looks like a pasted final answer",
+    };
+  }
+  const signals = ["therefore", "thus", "hence", "because", "so "];
+  const hasSignal = signals.some((w) => lower.includes(w));
+  const seed = hash32(`${input.captureHash}:${draft}`);
+  const roll = seed % 100;
+  if (hasSignal && roll > 30) {
+    return {
+      status: "solid",
+      reasoning: "draft cites reasoning and stays under the level-3 hint",
+    };
+  }
+  if (hasSignal) {
+    return {
+      status: "on-track",
+      reasoning: "draft shows the right direction; double-check the chain",
+    };
+  }
+  if (roll < 25) {
+    return {
+      status: "blocked",
+      reasoning: "draft does not yet show the reasoning being asked for",
+    };
+  }
+  return {
+    status: "on-track",
+    reasoning: "draft is heading in the right direction; keep going",
+  };
+}
+
+export class FakeAdapter implements LLMAdapter {
+  readonly name = "fake";
+
+  async extract(input: ExtractInput): Promise<ExtractedQuestion[]> {
+    const seed = hash32(`extract:${input.captureHash}:${input.pageIndex}`);
+    const n = (seed % 3) + 1;
+    const questions: ExtractedQuestion[] = [];
+    for (let i = 0; i < n; i += 1) {
+      const id = `q-p${input.pageIndex}-${i}`;
+      const tag = input.captureHash.slice(0, 4);
+      const text = `Question ${i + 1} on page ${input.pageIndex} (capture ${tag}…)`;
+      questions.push({ id, index: i, text });
+    }
+    return questions;
+  }
+
+  async scout(input: ScoutInput): Promise<ScoutVerdict> {
+    const { status, reasoning } = scoutDraft(input);
+    return { status, reasoning, escalate: status !== "solid" };
+  }
+
+  async triage(input: TriageInput): Promise<TriageVerdict> {
+    const hash = input.captureHash ?? "";
+    const lastHex = hash.length > 0 ? parseInt(hash[hash.length - 1], 16) : 0;
+    const update = Number.isNaN(lastHex) ? true : lastHex % 2 === 1;
+    if (!update) {
+      return {
+        update: false,
+        reason: "capture adds no information the session context lacks",
+        novelty: "none",
+      };
+    }
+    const novelty = lastHex >= 8 ? "new-material" : "new-questions";
+    return {
+      update: true,
+      reason: `deterministic triage accepted hash ${hash.slice(0, 6)} as ${novelty}`,
+      novelty,
+    };
+  }
+
+  async tutor(input: TutorInput): Promise<TutorTurn> {
+    const draft = (input.draftText ?? "").trim();
+    const message = (input.message ?? "").trim();
+
+    const signals = ["therefore", "thus", "hence", "so ", "because of this"];
+    const showsReasoning = draft.length >= 30 && signals.some((w) => draft.toLowerCase().includes(w));
+    const stuck = draft.length === 0 || draft.length < 12;
+
+    let escalation: HintEscalation;
+    if (message.length > 0) {
+      escalation = "same";
+    } else if (stuck) {
+      escalation = "up";
+    } else if (showsReasoning) {
+      escalation = "down";
+    } else {
+      escalation = "same";
+    }
+
+    let level = clampLevel(input.currentLevel);
+    if (escalation === "up" && level < MAX_LEVEL) level += 1;
+    if (escalation === "down" && level > MIN_LEVEL) level -= 1;
+    level = clampLevel(level);
+
+    const base = HINT_LADDER[level] ?? HINT_LADDER[HINT_LADDER.length - 1];
+    const hint = message.length > 0
+      ? `${base}\n\nYou asked: "${message}". Rephrase that in your own words first.`
+      : base;
+
+    if (looksLikeFinalAnswer(hint)) {
+      throw new Error("FakeAdapter invariant violated: hint looks like a final answer");
+    }
+
+    const history =
+      input.threadHistory
+        .slice(-4)
+        .map((t) => `[level ${t.level}, ${t.escalation}] ${t.hint}`)
+        .join("\n") || "(no prior turns)";
+    const lines = [
+      `Question:\n${input.questionText}`,
+      `Student draft:\n${draft || "(no attempt yet)"}`,
+      `Current hint level: ${level}`,
+      `Prior turns:\n${history}`,
+    ];
+    if (message.length > 0) lines.push(`Student asks:\n${message}`);
+    input.onPrompt?.(promptPair(TUTOR_SYSTEM, lines.join("\n\n")));
+
+    return {
+      questionId: input.questionId,
+      hint,
+      level,
+      escalation,
+    };
+  }
+
+  async watch(input: WatchInput): Promise<WatchVerdict> {
+    const hash = input.captureHash ?? "";
+    const lastHex = hash.length > 0 ? parseInt(hash[hash.length - 1], 16) : 0;
+    if (Number.isNaN(lastHex) || lastHex % 2 !== 0) {
+      return { flag: false, reasoning: "no detectable slip at this checkpoint" };
+    }
+    const severity: WatchSeverity = lastHex < 8 ? "high" : lastHex < 12 ? "medium" : "low";
+    return {
+      flag: true,
+      severity,
+      ghostKey: `g-${hash.slice(0, 6)}`,
+      reasoning: `deterministic watcher flagged hash ${hash.slice(0, 6)} (severity=${severity})`,
+    };
+  }
+
+  async idk(input: IdkInput): Promise<TutorTurn> {
+    const q = (input.questionText ?? "").trim();
+    const snippet = q.length > 0 ? q.slice(0, 80) : "(question text unavailable)";
+    const hint = q.length > 0
+      ? `What does the question ask, in your own words? Start with "${snippet}${q.length > 80 ? "…" : ""}"`
+      : "Pick the smallest piece you don't know and name it.";
+    if (looksLikeFinalAnswer(hint)) {
+      throw new Error("FakeAdapter invariant violated: idk hint looks like a final answer");
+    }
+    input.onPrompt?.(promptPair(IDK_SYSTEM, `Question:\n${q || "(question text unavailable)"}`));
+    return {
+      questionId: input.questionId,
+      hint,
+      level: 0,
+      escalation: "same",
+    };
+  }
+
+  async annotate(input: AnnotateInput): Promise<BoardAnnotationTurn[]> {
+    const hasScene = Boolean(input.questionText || input.hint || input.board.length > 0);
+    if (!hasScene) return [];
+    const id = `tutor-note-${hash32(`${input.questionId ?? ""}:${input.hint ?? ""}`)}`;
+    return [
+      {
+        kind: "board-text",
+        element: {
+          id,
+          author: "tutor",
+          x: 32,
+          y: 32,
+          source: "Check this step.",
+        },
+      },
+    ];
+  }
+}
+
+export const fakeAdapter = new FakeAdapter();
+
+export const __testing = { clampLevel, HINT_LADDER, looksLikeFinalAnswer };
