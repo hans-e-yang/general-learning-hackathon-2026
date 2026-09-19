@@ -41,7 +41,7 @@ piece that calls an LLM. Sessions are identified by a single `uuid` minted on
 | `companion/src/app/session/[uuid]/route.ts` | `GET /session/:uuid` → snapshot for resume (#20). |
 | `companion/src/app/session/[uuid]/events/route.ts` | `GET` SSE stream; snapshot first, then replay + live. |
 | `companion/src/app/session/[uuid]/material/route.ts` | `POST` capture ingest; triggers extract + scout ticks + watcher. |
-| `companion/src/app/session/[uuid]/turn/route.ts` | `POST` student actions (`setMode`, `saveDraft`, `requestCheck`, `ask`, `idk`). |
+| `companion/src/app/session/[uuid]/turn/route.ts` | `POST` student actions (`setMode`, `saveDraft`, `requestCheck`, `ask`, `idk`); the five conversational kinds accept an optional `image` snapshot. |
 | `companion/src/app/session/[uuid]/export/route.ts` | `GET` PDF generation with `attachment; filename="circlr-<uuid>.pdf"`. |
 | `companion/src/lib/session/{types,store,bus,snapshot}.ts` | Canonical `SessionState`, in-process map + per-uuid mutex, event bus + replay buffer, snapshot projection. |
 | `companion/src/lib/agent/llm-adapter.ts` | Adapter interface: `extract`, `scout`, `tutor`, `watch`, `idk`. |
@@ -63,6 +63,7 @@ SessionState
   worksheet[]: { id, index, text, label?, status }
   drafts: Record<questionId, string>
   threads: Record<questionId, TutorTurn[]>
+  context[]: ContextEntry                          // append-only session transcript (see §13)
   board[]: BoardElement                            // shared canvas, student + tutor marks
   ghostCounts: Record<ghostKey, number>           // added in #23
   ghostSummary[]: { ghostKey, severity, firstSeenAt, lastSeenAt, occurrences, silent }  // #23
@@ -79,11 +80,17 @@ a refresh.
 
 | Method | Role | Called from |
 | --- | --- | --- |
+<<<<<<< HEAD
 | `extract({captureHash, pageIndex})` → `ExtractedQuestion[]` | Vision + structuring. Stable IDs from printed `label` (fallback text fingerprint). | `/material` after a non-deduped capture (#14). |
 | `scout({captureHash, pageIndex, draftText, questionText})` → `ScoutVerdict` | Cheap/fast quality assessment. `escalate` says whether the Tutor should speak (#29). | Material route + every `saveDraft` (#15); `/turn kind:"assess"` (#29). |
 | `tutor({questionId, questionText, draftText, message?, threadHistory, currentLevel, captureHash?})` → `TutorTurn` | Socratic turn. Hint level 0–3; never a final answer (#16). | `/turn requestCheck`, `/turn ask`, flag escalations from the watcher (#23). |
+=======
+| `extract({captureHash, pageIndex})` → `ExtractedQuestion[]` | Vision + structuring. Stable IDs `q-p<page>-<i>`. | `/material` after a non-deduped capture (#14). |
+| `scout({captureHash, pageIndex, draftText, questionText, image?})` → `ScoutVerdict` | Cheap/fast quality assessment. `escalate` says whether the Tutor should speak (#29). Uses the vision model when an `image` is attached. | Material route + every `saveDraft` (#15); `/turn kind:"assess"` (#29). |
+| `tutor({questionId, questionText, draftText, message?, threadHistory, currentLevel, captureHash?, image?})` → `TutorTurn` | Socratic turn. Hint level 0–3; never a final answer (#16). Uses the vision model when an `image` is attached. | `/turn requestCheck`, `/turn ask`, flag escalations from the watcher (#23). |
+>>>>>>> 017927f (c)
 | `watch({captureHash, pageIndex, questionText?, draftText?, recurrenceCount?})` → `WatchVerdict` | Live canvas watcher. Returns `{flag, severity?, ghostKey?, reasoning}` (#22). | `/material` after a non-deduped capture. |
-| `idk({questionId, questionText, draftText?})` → `TutorTurn` | Smallest-unblock escape hatch (#23). Level 0; never a final answer. | `/turn idk`. |
+| `idk({questionId, questionText, draftText?, image?})` → `TutorTurn` | Smallest-unblock escape hatch (#23). Level 0; never a final answer. Uses the vision model when an `image` is attached. | `/turn idk`. |
 | `triage({captureHash, pageIndex, image, contextSummary})` → `TriageVerdict` | Small vision gate: does this capture carry information the session context does not already hold? | `/material`, before `extract` (#28). |
 | `annotate({questionId?, questionText?, draftText?, hint?, message?, captureHash?, board})` → `BoardAnnotationTurn[]` | Additive Tutor marks on the shared canvas: text, shapes (circle/arrow/line), pen strokes. Never erase/remove/move student work; never a final answer. | Loop, after every `tutor`/`idk` turn (`requestCheck`, `ask`, `assess`, `idk`, watcher escalation). |
 
@@ -423,3 +430,64 @@ Timeline delta:
 |                                |--> tutor(thread,currentLevel) ------>|
 |<-- tutor.turn (id=N+1) --------|
 ```
+
+## 13. Session context transcript
+
+`SessionState.context` is an append-only, ordered transcript of everything that
+happened in a Session — not just tutor turns. Every conversational or
+state-changing event appends one `ContextEntry`:
+
+| `kind` | Written by | Carries |
+| --- | --- | --- |
+| `capture` | `triageOnCapture` | `captureId`, `captureHash`, `pageIndex`, `image`, and the `triage` verdict |
+| `extraction` | `extractFromCapture` | `partial` + the full `questions[]` pulled from the capture |
+| `draft` | `assessDraft` (also the Scout tick in `requestCheck`/`assess`) | `questionId`, `questionText`, the student's `draft`, and the Scout `assessment` |
+| `tutor` / `idk` | `processTurn`, `watchOnCapture` escalation | the full `prompt` (system + user), the `input` turn, the `material` it used, and the `output` `TutorTurn` |
+| `watch` | `watchOnCapture` | the `verdict` whether or not it flagged |
+| `board` | `applyBoardMutation` | the student `BoardTurn` |
+
+So a full run reads, in order:
+`capture → extraction → watch → board → draft (answer) → tutor → draft → tutor …`
+
+This is server-only (`ContextEntry` lives in `session/types.ts`); it is not in
+`SessionSnapshot`, so it never ships over SSE or the resume endpoint. It is the
+audit/observability record for the loop (and the seam a future "conversation
+export" or eval harness would read). Entries are appended inside the per-uuid
+`withLock`, so ordering matches arrival order.
+
+## 14. Images on student turns
+
+The five conversational turn kinds (`saveDraft`, `requestCheck`, `assess`,
+`ask`, `idk`) accept an **optional `image`**: a base64-encoded JPEG with the same
+FFD8FF validation as `/material` (`base64JpegSchema`). It is the student's work
+snapshot for that turn — the student photographing their own paper or the pane
+grabbing the visible board.
+
+- **Validation.** `TurnRequestSchema` validates the image on the same five
+  kinds; a malformed/non-JPEG image yields the usual `400 invalid turn`. A turn
+  without an `image` behaves exactly as before.
+- **Which roles see it.** When present, the loop threads it into:
+  - `scout` (assessment of the draft),
+  - `tutor` (`requestCheck`/`ask`/`assess` escalation, and the watcher ladder),
+  - `idk`.
+  Each adapter call switches to the **vision model** (`CIRCLR_VISION_MODEL`) and
+  the larger reasoning budget; without an image it stays on the text model.
+  `extract` is **not** run from `/turn` — new questions still only enter via
+  `/material`'s triage→extract pipeline.
+- **What it is not.** The image is *not* a `CaptureMeta`: it is not hashed, not
+  deduped, and does not enter `recentHashes` or `state.captures`. It is attached
+  to the turn and recorded on the matching `ContextEntry` (`draft.image` for
+  assessments, `material.image` for tutor/idk entries).
+- **Invariant.** Images never relax the Socratic invariant: `tutor`/`idk` output
+  is still checked against the never-final-answer guard regardless of whether
+  the model could see the student's work.
+
+```
+POST /session/<uuid>/turn
+{ "kind": "requestCheck", "questionId": "q-p0-0", "image": "<base64 JPEG>" }
+        |
+        |--> tutor(questionText, draftText, image) --> vision model
+        |<-- TutorTurn (level, escalation, hint) ----|
+   <-- tutor.turn + board.element (annotation) ------|
+```
+
