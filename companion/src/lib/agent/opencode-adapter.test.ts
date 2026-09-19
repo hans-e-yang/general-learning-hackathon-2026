@@ -429,6 +429,14 @@ describe("opencode-adapter/annotate (canvas tools)", () => {
     expect(turns).toEqual([]);
   });
 
+  it("keeps the small budget on the text-only path", async () => {
+    fetchMock.mockResolvedValueOnce(completion({ annotations: [] }));
+    await adapter().annotate({ questionId: "q1", questionText: "x?", board: [] });
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    expect(body.model).toBe("test-text");
+    expect(body.max_tokens).toBe(500);
+  });
+
   it("rejects a malformed annotation payload", async () => {
     fetchMock.mockResolvedValueOnce(
       completion({ annotations: [{ tool: "shape", x: 1 }] })

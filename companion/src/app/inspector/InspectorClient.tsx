@@ -62,16 +62,26 @@ function Line({ k, v }: { k: string; v: string }) {
   );
 }
 
-function Thumb({ src }: { src?: string }) {
+function Thumb({ src, caption }: { src?: string; caption?: string }) {
   if (!src) return null;
   return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
-      src={src}
-      alt="inspected capture"
-      className="mt-1 max-h-40 w-full rounded border border-zinc-800 bg-black object-contain"
-    />
+    <figure className="m-0 mt-1">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={src}
+        alt="inspected capture"
+        className="max-h-40 w-full rounded border border-zinc-800 bg-black object-contain"
+      />
+      {caption ? <figcaption className="mt-1 text-[10px] text-zinc-500">{caption}</figcaption> : null}
+    </figure>
   );
+}
+
+/** Explain what a thumbnail is, since annotation images are captured before marks are cleared. */
+function thumbCaption(entry: ContextEntry): string | undefined {
+  if (entry.kind === "board-snapshot") return "canvas sent to the backend";
+  if (entry.kind === "annotation") return "canvas as sent (may include prior Tutor marks)";
+  return undefined;
 }
 
 function EntryBody({ entry }: { entry: ContextEntry }) {
@@ -198,7 +208,7 @@ function EntryBody({ entry }: { entry: ContextEntry }) {
             k="output"
             v={
               entry.output.length === 0
-                ? "(no marks)"
+                ? "none \u2014 LLM returned an empty annotations array (nothing to flag)"
                 : Object.entries(counts)
                     .map(([kind, n]) => `${kind.replace("board-", "")}\u00d7${n}`)
                     .join(", ")
@@ -412,7 +422,7 @@ export function InspectorClient() {
                         </span>
                       </div>
                       <EntryBody entry={entry} />
-                      <Thumb src={imageSrc(entryImage(entry))} />
+                      <Thumb src={imageSrc(entryImage(entry))} caption={thumbCaption(entry)} />
                     </li>
                   ))}
                 </ol>
