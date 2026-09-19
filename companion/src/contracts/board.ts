@@ -168,6 +168,18 @@ export type BoardAnnotationTurn = BoardPenTurn | BoardShapeTurn | BoardTextTurn;
 export type BoardElementEvent = {
   type: "board.element";
   element: BoardElement;
+  /** Question board this element belongs to (Tutor marks); absent on legacy frames. */
+  questionId?: string;
+};
+
+/**
+ * Announces a fresh batch of Tutor marks for one question board. The client
+ * clears that board's previous `author:"tutor"` elements before the following
+ * `board.element` frames land, so each annotation replaces the last.
+ */
+export type BoardAnnotateEvent = {
+  type: "board.annotate";
+  questionId: string;
 };
 
 export type BoardRemoveEvent = {
@@ -202,6 +214,7 @@ export type BoardShapeMoveEvent = {
 
 export type BoardSseEvent =
   | BoardElementEvent
+  | BoardAnnotateEvent
   | BoardRemoveEvent
   | BoardTextMoveEvent
   | BoardPenMoveEvent

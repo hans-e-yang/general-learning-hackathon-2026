@@ -1,6 +1,38 @@
+import { applyBoardElement } from "@/board/model";
 import type { BoardElement } from "@/contracts/board";
 
 export type BoardSlotMap = Record<string, BoardElement[]>;
+
+/**
+ * Apply one incoming element (typically a Tutor annotation) to a specific
+ * question board. Grow-only: a duplicate element id is ignored, and an unknown
+ * question id gets a fresh slot so a mark is never dropped.
+ */
+export function applyElementToSlot(
+  boards: BoardSlotMap,
+  questionId: string,
+  element: BoardElement,
+): BoardSlotMap {
+  const current = boards[questionId] ?? [];
+  if (current.some((el) => el.id === element.id)) return boards;
+  return { ...boards, [questionId]: applyBoardElement(current, element) };
+}
+
+/**
+ * Drop the agent's marks from one question board, leaving the student's ink.
+ * Used before a fresh annotation batch lands so marks never pile up.
+ */
+export function clearTutorMarks(
+  boards: BoardSlotMap,
+  questionId: string,
+): BoardSlotMap {
+  const current = boards[questionId];
+  if (!current || !current.some((el) => el.author === "tutor")) return boards;
+  return {
+    ...boards,
+    [questionId]: current.filter((el) => el.author !== "tutor"),
+  };
+}
 
 /** Grow-only: add missing question ids with empty element arrays; keep existing ink. */
 export function ensureBoardSlots(

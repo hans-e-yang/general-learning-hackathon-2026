@@ -92,7 +92,7 @@ a refresh.
 | `watch({captureHash, pageIndex, questionText?, draftText?, recurrenceCount?})` → `WatchVerdict` | Live canvas watcher. Returns `{flag, severity?, ghostKey?, reasoning}` (#22). | `/material` after a non-deduped capture. |
 | `idk({questionId, questionText, draftText?, image?})` → `TutorTurn` | Smallest-unblock escape hatch (#23). Level 0; never a final answer. Uses the vision model when an `image` is attached. | `/turn idk`. |
 | `triage({captureHash, pageIndex, image, contextSummary})` → `TriageVerdict` | Small vision gate: does this capture carry information the session context does not already hold? | `/material`, before `extract` (#28). |
-| `annotate({questionId?, questionText?, draftText?, hint?, message?, captureHash?, board})` → `BoardAnnotationTurn[]` | Additive Tutor marks on the shared canvas: text, shapes (circle/arrow/line), pen strokes. Never erase/remove/move student work; never a final answer. | Loop, after every `tutor`/`idk` turn (`requestCheck`, `ask`, `assess`, `idk`, watcher escalation). |
+| `annotate({questionId?, questionText?, draftText?, hint?, message?, captureHash?, board, image?})` → `BoardAnnotationTurn[]` | Additive Tutor marks on the shared canvas: text, shapes (circle/arrow/line), pen strokes. Uses the vision model when a canvas `image` is attached. Never erase/remove/move student work; never a final answer. | Loop, after every `tutor`/`idk` turn (`requestCheck`, `ask`, `assess`, `idk`, watcher escalation) and on the companion's idle-snapshot `annotate` turn. |
 
 `FakeAdapter` is the default (`CIRCLR_LLM=fake`). All 110 tests run against it
 without network calls or vendor keys per the spec's test discipline.
@@ -284,10 +284,18 @@ endpoint it always did.
 
 - **Agent → canvas.** After every `tutor`/`idk` turn the loop calls
   `adapter.annotate()`, which returns zero or more **additive** turns
-  (`BoardAnnotationTurn` = pen | shape | text, `author:"tutor"`). The loop applies
-  them with the same reducer and publishes `board.element`. Anchoring/erasing the
-  student's work is not in the annotation toolset, and annotation failures are
-  swallowed so they never break the tutor turn.
+  (`BoardAnnotationTurn` = pen | shape | text, `author:"tutor"`). It is also
+  driven directly by the companion: the board UI watches for a quiet canvas
+  (~5s without student ink), rasterizes the active board to a JPEG, and posts
+  `POST /turn` `{ kind:"annotate", questionId, image }`. The loop runs
+  `adapter.annotate()` with that snapshot (vision model when an image is
+  attached), clears the agent's previous marks, and streams the new batch. The
+  clear is announced as `board.annotate` `{questionId}` so the client drops its
+  stale Tutor marks before the following `board.element` frames arrive; those
+  frames carry an optional `questionId` so the companion places each mark on the
+  matching per-question board. Anchoring/erasing the student's work is not in the
+  annotation toolset, and annotation failures are swallowed so they never break
+  the tutor turn.
 
 - **Resume.** `GET /session/:uuid` returns `SessionSnapshot.board`, and the first
   SSE frame (`snapshot`) carries it too, so a refresh re-hydrates the canvas.

@@ -377,6 +377,42 @@ describe("/session/:uuid/turn POST", () => {
     );
     expect(res.status).toBe(400);
   });
+
+  it("accepts an annotate turn carrying a canvas image", async () => {
+    const s = (await (
+      await startSession(req("http://test.local/session", { method: "POST" }))
+    ).json()) as { uuid: string };
+    getOrCreate(s.uuid);
+    const res = await postTurn(
+      req(`http://test.local/session/${s.uuid}/turn`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          kind: "annotate",
+          questionId: "q1",
+          image: JPEG_B64,
+        }),
+      }),
+      { params: Promise.resolve({ uuid: s.uuid }) }
+    );
+    expect(res.status).toBe(202);
+  });
+
+  it("rejects an annotate turn without a canvas image", async () => {
+    const s = (await (
+      await startSession(req("http://test.local/session", { method: "POST" }))
+    ).json()) as { uuid: string };
+    getOrCreate(s.uuid);
+    const res = await postTurn(
+      req(`http://test.local/session/${s.uuid}/turn`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ kind: "annotate", questionId: "q1" }),
+      }),
+      { params: Promise.resolve({ uuid: s.uuid }) }
+    );
+    expect(res.status).toBe(400);
+  });
 });
 
 describe("/session/:uuid/turn idk (#23)", () => {

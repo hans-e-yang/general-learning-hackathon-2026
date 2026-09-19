@@ -1,12 +1,19 @@
 "use client";
 
-import { useEffect, useState, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useEffect,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { BoardCarousel } from "@/board/BoardCarousel";
+import { renderBoardToJpeg } from "@/board/boardImage";
 import { BoardJumpStrip } from "@/board/BoardJumpStrip";
 import { BoardSurface } from "@/board/BoardSurface";
 import { BoardToolbar } from "@/board/BoardToolbar";
 import { neighborQuestionId } from "@/board/multiBoard";
 import { useMultiBoardSession } from "@/board/useMultiBoardSession";
+import type { BoardElement } from "@/contracts/board";
 import { normalizeQuestionLabel } from "@/lib/questionLabel";
 import { subscribeWorksheet } from "@/session/worksheetChannel";
 
@@ -61,6 +68,30 @@ function writeSessionToUrl(uuid: string): void {
 }
 
 function BoardShell({ sessionUuid }: { sessionUuid: string }) {
+  /** Idle canvas snapshot → agent annotations come back over the board SSE. */
+  const annotateOnIdle = useCallback(
+    async ({
+      questionId,
+      elements,
+    }: {
+      questionId: string;
+      elements: BoardElement[];
+    }) => {
+      if (elements.length === 0) return;
+      const image = renderBoardToJpeg(elements);
+      if (!image) return;
+      const res = await fetch(`/session/${sessionUuid}/turn`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ kind: "annotate", questionId, image }),
+      });
+      if (!res.ok) {
+        throw new Error(`annotate request failed: ${res.status}`);
+      }
+    },
+    [sessionUuid],
+  );
+
   const {
     questions,
     activeQuestionId,
@@ -92,7 +123,11 @@ function BoardShell({ sessionUuid }: { sessionUuid: string }) {
     moveText,
     movePen,
     moveShape,
-  } = useMultiBoardSession();
+  } = useMultiBoardSession({
+    sessionUuid,
+    mode: "live",
+    onIdle: annotateOnIdle,
+  });
   const [captureProcessing, setCaptureProcessing] = useState(false);
 
   useEffect(() => {

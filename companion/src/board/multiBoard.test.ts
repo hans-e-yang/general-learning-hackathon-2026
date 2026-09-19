@@ -1,10 +1,67 @@
 import { describe, expect, it } from "vitest";
+import type { BoardElement } from "@/contracts/board";
 import {
+  applyElementToSlot,
+  clearTutorMarks,
   ensureBoardSlots,
   neighborQuestionId,
   pickActiveQuestionId,
   removeBoardSlot,
 } from "./multiBoard";
+
+const tutorText: BoardElement = {
+  id: "tutor-text-1",
+  tool: "text",
+  author: "tutor",
+  x: 10,
+  y: 10,
+  source: "Check this step.",
+  color: "#b85c38",
+  width: 180,
+  fontSize: 16,
+};
+
+describe("applyElementToSlot", () => {
+  it("adds a tutor mark to the named board only", () => {
+    const boards = { a: [] as BoardElement[], b: [] as BoardElement[] };
+    const next = applyElementToSlot(boards, "a", tutorText);
+    expect(next.a).toHaveLength(1);
+    expect(next.b).toHaveLength(0);
+  });
+
+  it("creates a slot when the question is not yet known", () => {
+    const next = applyElementToSlot({}, "late", tutorText);
+    expect(next.late).toHaveLength(1);
+  });
+
+  it("ignores a duplicate element id (keeps the same map)", () => {
+    const boards = { a: [tutorText] };
+    expect(applyElementToSlot(boards, "a", tutorText)).toBe(boards);
+  });
+});
+
+describe("clearTutorMarks", () => {
+  it("drops tutor marks but keeps student ink on the named board", () => {
+    const studentInk: BoardElement = {
+      id: "pen-1",
+      tool: "pen",
+      author: "student",
+      points: [{ x: 0, y: 0 }],
+      color: "#1a1a1a",
+      strokeWidth: 2,
+    };
+    const boards = { a: [studentInk, tutorText], b: [tutorText] };
+    const next = clearTutorMarks(boards, "a");
+    expect(next.a).toEqual([studentInk]);
+    expect(next.b).toHaveLength(1);
+  });
+
+  it("is a no-op when the board has no tutor marks", () => {
+    const boards = { a: [tutorText] };
+    // tutorText is the only element, so clearing leaves an empty (new) array.
+    expect(clearTutorMarks(boards, "missing")).toBe(boards);
+  });
+});
 
 describe("ensureBoardSlots", () => {
   it("adds empty slots without dropping existing ink keys", () => {

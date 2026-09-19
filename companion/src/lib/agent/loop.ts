@@ -157,7 +157,11 @@ function applyBoardMutation(
   }
 }
 
-/** Best-effort: ask the agent for additive canvas marks after a tutor/idk turn. */
+/**
+ * Best-effort: ask the agent for additive canvas marks. Called after a
+ * tutor/idk turn and on an idle canvas snapshot. Each run replaces the agent's
+ * previous marks on that board (student ink is never touched).
+ */
 async function annotateBoard(
   state: SessionState,
   uuid: string,
@@ -168,6 +172,7 @@ async function annotateBoard(
     hint?: string;
     message?: string;
     captureHash?: string;
+    image?: string;
   }
 ): Promise<void> {
   const { adapter, publishEvent } = depsOrDefault();
@@ -178,6 +183,16 @@ async function annotateBoard(
   } catch {
     return;
   }
+
+  // Replace the agent's prior marks so repeated snapshots don't pile up.
+  state.board = state.board.filter((el) => el.author !== "tutor");
+  if (ctx.questionId) {
+    publishEvent(uuid, {
+      type: "board.annotate",
+      data: { questionId: ctx.questionId },
+    });
+  }
+
   for (const raw of turns) {
     const turn = asBoardAnnotationTurn(raw);
     if (!turn) continue;
@@ -185,7 +200,13 @@ async function annotateBoard(
     state.board = applyBoardTurn(state.board, turn);
     const element = state.board[state.board.length - 1];
     if (state.board.length > before && element) {
-      publishEvent(uuid, { type: "board.element", data: { element } });
+      publishEvent(uuid, {
+        type: "board.element",
+        data: {
+          element,
+          ...(ctx.questionId ? { questionId: ctx.questionId } : {}),
+        },
+      });
     }
   }
 }
@@ -715,6 +736,19 @@ export async function processTurn(uuid: string, turn: TurnRequest): Promise<void
           questionText: q?.text,
           draftText: state.drafts[turn.questionId],
           hint: tutorTurn.hint,
+        });
+        return;
+      }
+      case "annotate": {
+        const q = findQuestion(state, turn.questionId);
+        const lastCapture =
+          state.captures.length > 0 ? state.captures[state.captures.length - 1] : undefined;
+        await annotateBoard(state, uuid, {
+          questionId: turn.questionId,
+          questionText: q?.text,
+          draftText: state.drafts[turn.questionId],
+          captureHash: lastCapture?.hash,
+          image: turn.image,
         });
         return;
       }

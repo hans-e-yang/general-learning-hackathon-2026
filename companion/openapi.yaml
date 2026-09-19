@@ -143,6 +143,7 @@ paths:
                 - $ref: "#/components/schemas/AssessTurn"
                 - $ref: "#/components/schemas/AskTurn"
                 - $ref: "#/components/schemas/IdkTurn"
+                - $ref: "#/components/schemas/AnnotateTurn"
                 - $ref: "#/components/schemas/BoardPenTurn"
                 - $ref: "#/components/schemas/BoardShapeTurn"
                 - $ref: "#/components/schemas/BoardTextTurn"
@@ -160,6 +161,7 @@ paths:
                   assess: "#/components/schemas/AssessTurn"
                   ask: "#/components/schemas/AskTurn"
                   idk: "#/components/schemas/IdkTurn"
+                  annotate: "#/components/schemas/AnnotateTurn"
                   board-pen: "#/components/schemas/BoardPenTurn"
                   board-shape: "#/components/schemas/BoardShapeTurn"
                   board-text: "#/components/schemas/BoardTextTurn"
@@ -291,6 +293,19 @@ components:
         image:
           type: string
           description: Optional base64-encoded JPEG (FFD8FF prefix) snapshot of the student's work for this turn
+    AnnotateTurn:
+      type: object
+      required: [kind, questionId, image]
+      properties:
+        kind:
+          type: string
+          enum: [annotate]
+        questionId:
+          type: string
+          description: Board the agent should mark up
+        image:
+          type: string
+          description: Base64-encoded JPEG (FFD8FF prefix) snapshot of the student's canvas
     BoardAuthor:
       type: string
       enum: [student, tutor]
@@ -596,6 +611,7 @@ components:
         - $ref: "#/components/schemas/AssessmentTickEvent"
         - $ref: "#/components/schemas/TutorTurnEvent"
         - $ref: "#/components/schemas/BoardElementEvent"
+        - $ref: "#/components/schemas/BoardAnnotateEvent"
         - $ref: "#/components/schemas/BoardRemoveEvent"
         - $ref: "#/components/schemas/BoardTextMoveEvent"
         - $ref: "#/components/schemas/BoardPenMoveEvent"
@@ -612,6 +628,7 @@ components:
           assessment.tick: "#/components/schemas/AssessmentTickEvent"
           tutor.turn: "#/components/schemas/TutorTurnEvent"
           board.element: "#/components/schemas/BoardElementEvent"
+          board.annotate: "#/components/schemas/BoardAnnotateEvent"
           board.remove: "#/components/schemas/BoardRemoveEvent"
           board.text-move: "#/components/schemas/BoardTextMoveEvent"
           board.pen-move: "#/components/schemas/BoardPenMoveEvent"
@@ -720,6 +737,23 @@ components:
           properties:
             element:
               $ref: "#/components/schemas/BoardElement"
+            questionId:
+              type: string
+              description: Question board this element belongs to (Tutor marks); absent on legacy frames.
+    BoardAnnotateEvent:
+      type: object
+      required: [type, data]
+      properties:
+        type:
+          type: string
+          enum: ["board.annotate"]
+        data:
+          type: object
+          required: [questionId]
+          properties:
+            questionId:
+              type: string
+              description: Board whose previous Tutor marks should be cleared before the new batch
     BoardRemoveEvent:
       type: object
       required: [type, data]

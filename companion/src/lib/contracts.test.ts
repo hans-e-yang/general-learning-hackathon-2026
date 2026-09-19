@@ -356,11 +356,16 @@ describe("contracts: openapi.yaml", () => {
     const schemas = (spec.components as { schemas: Record<string, unknown> }).schemas;
     expect(schemas).toHaveProperty("BoardPenTurn");
     expect(schemas).toHaveProperty("BoardShapeMoveTurn");
+    expect(schemas).toHaveProperty("AnnotateTurn");
+    expect(schemas).toHaveProperty("BoardAnnotateEvent");
     const sse = schemas.SseEvent as {
       discriminator: { mapping: Record<string, string> };
     };
     expect(sse.discriminator.mapping["board.element"]).toBe(
       "#/components/schemas/BoardElementEvent"
+    );
+    expect(sse.discriminator.mapping["board.annotate"]).toBe(
+      "#/components/schemas/BoardAnnotateEvent"
     );
   });
 

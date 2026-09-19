@@ -95,6 +95,8 @@ export interface AnnotateInput {
   captureHash?: string;
   /** Current canvas elements, so the agent can place marks relative to the student's work. */
   board: BoardElement[];
+  /** Snapshot of the rendered canvas (base64 JPEG), for vision-guided marks. */
+  image?: string;
   onPrompt?: PromptSink;
 }
 

@@ -447,7 +447,11 @@ describe("agent/loop canvas", () => {
 
     const state = get("u1")!;
     expect(state.board.some((el) => el.author === "tutor")).toBe(true);
-    expect(events.some((e) => e.evt.type === "board.element")).toBe(true);
+    const evt = events.find((e) => e.evt.type === "board.element");
+    expect(evt).toBeDefined();
+    expect(
+      evt?.evt.type === "board.element" ? evt.evt.data.questionId : undefined,
+    ).toBe("q1");
   });
 
   it("keeps the tutor turn when annotate throws", async () => {
@@ -468,6 +472,73 @@ describe("agent/loop canvas", () => {
 
     expect(events.some((e) => e.evt.type === "tutor.turn")).toBe(true);
     expect(get("u1")!.board).toHaveLength(0);
+  });
+
+  it("annotates from an idle canvas image, replacing prior tutor marks", async () => {
+    const IMG = "data:image/jpeg;base64,/9j/AAAA";
+    const { events, publisher } = capture();
+    const seen: Array<string | undefined> = [];
+    configureAgentLoop({
+      adapter: stubAdapter({
+        annotate: async (input) => {
+          seen.push(input.image);
+          return [
+            {
+              kind: "board-text",
+              element: {
+                id: "tutor-1",
+                author: "tutor",
+                x: 4,
+                y: 8,
+                source: "check the sign",
+              },
+            },
+          ];
+        },
+      }),
+      publishEvent: publisher,
+    });
+    seedSession("u1", {
+      worksheet: [{ id: "q1", index: 0, text: "x?", status: "blocked" }],
+      board: [
+        {
+          id: "stale-tutor",
+          tool: "text",
+          author: "tutor",
+          x: 0,
+          y: 0,
+          source: "old mark",
+          color: "#b85c38",
+          width: 180,
+          fontSize: 16,
+        },
+        {
+          id: "student-1",
+          tool: "pen",
+          author: "student",
+          points: [{ x: 0, y: 0 }],
+          color: "#1a1a1a",
+          strokeWidth: 2,
+        },
+      ],
+    });
+
+    await processTurn("u1", { kind: "annotate", questionId: "q1", image: IMG });
+
+    expect(seen).toEqual([IMG]);
+    const types = events.map((e) => e.evt.type);
+    expect(types).toContain("board.annotate");
+    expect(types.indexOf("board.annotate")).toBeLessThan(
+      types.indexOf("board.element"),
+    );
+    const state = get("u1")!;
+    expect(state.board.some((el) => el.id === "stale-tutor")).toBe(false);
+    expect(state.board.some((el) => el.id === "student-1")).toBe(true);
+    expect(state.board.some((el) => el.id === "tutor-1")).toBe(true);
+    const evt = events.find((e) => e.evt.type === "board.element");
+    expect(
+      evt?.evt.type === "board.element" ? evt.evt.data.questionId : undefined,
+    ).toBe("q1");
   });
 });
 

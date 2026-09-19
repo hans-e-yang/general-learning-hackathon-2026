@@ -1,8 +1,10 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { applyBoardTurn } from "@/board/model";
 import {
+  applyElementToSlot,
+  clearTutorMarks,
   ensureBoardSlots,
   neighborQuestionId,
   pickActiveQuestionId,
@@ -26,21 +28,44 @@ import {
   DEFAULT_TEXT_WIDTH,
   colorForAuthor,
 } from "@/contracts/board";
+import {
+  createBoardChannel,
+  type BoardChannelMode,
+} from "@/session/boardChannel";
 
 function newId(prefix: string): string {
   return `${prefix}-${crypto.randomUUID()}`;
 }
 
 export type UseMultiBoardSessionOptions = {
+  sessionUuid?: string;
+  /** `live` subscribes to the Session SSE stream so Tutor marks reach the boards. */
+  mode?: BoardChannelMode;
   onStrokeEnd?: (element: BoardElement) => void;
+  /**
+   * Called once the student has stopped changing the active board for `idleMs`.
+   * The caller ships the snapshot to the agent; return a promise to keep the
+   * hook from firing again until it settles.
+   */
+  onIdle?: (input: {
+    questionId: string;
+    elements: BoardElement[];
+  }) => void | Promise<void>;
+  /** Quiet period before `onIdle` fires. Default 5000ms. */
+  idleMs?: number;
 };
 
 /**
- * Local multi-board session: one element list per question id.
- * No live board channel in this cut (stub/local only).
+ * Multi-board session: one element list per question id. Student ink is local;
+ * a live channel routes agent (Tutor) `board.element` frames to the board named
+ * by `questionId`.
  */
 export function useMultiBoardSession({
+  sessionUuid,
+  mode,
   onStrokeEnd,
+  onIdle,
+  idleMs = 5000,
 }: UseMultiBoardSessionOptions = {}) {
   const [questions, setQuestions] = useState<{ id: string; label: string }[]>(
     [],
@@ -55,11 +80,74 @@ export function useMultiBoardSession({
   const [shapeKind, setShapeKind] = useState<ShapeKind>("rect");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [livePoints, setLivePoints] = useState<BoardPoint[] | null>(null);
+  /** Bumped only by student ink; agent marks must not restart the idle timer. */
+  const [revision, setRevision] = useState(0);
   /** Pages the student deleted; filtered from every later worksheet sync. */
   const deletedIdsRef = useRef<Set<string>>(new Set());
+  const elementsRef = useRef<BoardElement[]>([]);
+  const activeQuestionIdRef = useRef<string | null>(null);
+  const lastAnnotatedRevisionRef = useRef<number | null>(null);
+  const annotatingRef = useRef(false);
 
-  const elements =
-    activeQuestionId !== null ? (boards[activeQuestionId] ?? []) : [];
+  const channel = useMemo(
+    () =>
+      sessionUuid
+        ? createBoardChannel({ mode: mode ?? "stub", sessionUuid })
+        : null,
+    [mode, sessionUuid],
+  );
+
+  useEffect(() => {
+    if (!channel) return;
+    return channel.subscribe((event) => {
+      if (event.type === "board.annotate") {
+        setBoards((prev) => clearTutorMarks(prev, event.questionId));
+        return;
+      }
+      if (event.type !== "board.element") return;
+      const { questionId } = event;
+      if (!questionId) return;
+      setBoards((prev) => applyElementToSlot(prev, questionId, event.element));
+    });
+  }, [channel]);
+
+  const elements = useMemo(
+    () => (activeQuestionId !== null ? (boards[activeQuestionId] ?? []) : []),
+    [boards, activeQuestionId],
+  );
+
+  useEffect(() => {
+    elementsRef.current = elements;
+    activeQuestionIdRef.current = activeQuestionId;
+  }, [elements, activeQuestionId]);
+
+  /**
+   * Idle watch: after the student stops editing the active board, hand the
+   * snapshot to `onIdle` (which ships it to the agent). Student revisions
+   * restart the clock; agent marks do not, so this cannot loop.
+   */
+  useEffect(() => {
+    if (!onIdle || activeQuestionId === null) return;
+    if (revision === 0) return;
+    if (lastAnnotatedRevisionRef.current === revision) return;
+    const timer = setTimeout(() => {
+      if (lastAnnotatedRevisionRef.current === revision) return;
+      if (annotatingRef.current) return;
+      const questionId = activeQuestionIdRef.current;
+      const snapshot = elementsRef.current;
+      if (questionId === null || snapshot.length === 0) return;
+      lastAnnotatedRevisionRef.current = revision;
+      annotatingRef.current = true;
+      Promise.resolve(onIdle({ questionId, elements: snapshot }))
+        .catch(() => {
+          lastAnnotatedRevisionRef.current = null;
+        })
+        .finally(() => {
+          annotatingRef.current = false;
+        });
+    }, idleMs);
+    return () => clearTimeout(timer);
+  }, [onIdle, activeQuestionId, revision, idleMs]);
 
   /** Switch active board; clears in-flight gesture and selection when id changes. */
   const activateQuestion = useCallback(
@@ -121,11 +209,12 @@ export function useMultiBoardSession({
 
   const updateActiveBoard = useCallback(
     (updater: (prev: BoardElement[]) => BoardElement[]) => {
+      if (activeQuestionId === null) return;
       setBoards((prev) => {
-        if (activeQuestionId === null) return prev;
         const current = prev[activeQuestionId] ?? [];
         return { ...prev, [activeQuestionId]: updater(current) };
       });
+      setRevision((r) => r + 1);
     },
     [activeQuestionId],
   );
@@ -286,6 +375,14 @@ export function useMultiBoardSession({
     [activeQuestionId, updateActiveBoard],
   );
 
+  /** Stub-only: drop an agent mark onto a named board for local rehearsal. */
+  const injectTutorElement = useCallback(
+    (questionId: string, element: BoardElement) => {
+      setBoards((prev) => applyElementToSlot(prev, questionId, element));
+    },
+    [],
+  );
+
   return {
     questions,
     boards,
@@ -318,6 +415,7 @@ export function useMultiBoardSession({
     moveText,
     movePen,
     moveShape,
-    channelMode: "stub" as const,
+    injectTutorElement,
+    channelMode: channel?.mode ?? ("stub" as const),
   };
 }

@@ -519,13 +519,18 @@ export class OpenCodeAdapter implements LLMAdapter {
     if (input.message) lines.push(`Student asks:\n${input.message}`);
     lines.push(`Canvas elements:\n${boardSummary}`);
 
+    if (input.image) {
+      lines.push(
+        "The student's canvas is attached as an image; place marks over the exact region that needs attention."
+      );
+    }
     const messages: ChatMessage[] = [
       { role: "system", content: ANNOTATE_SYSTEM },
-      { role: "user", content: lines.join("\n\n") },
+      { role: "user", content: userContent(lines.join("\n\n"), input.image) },
     ];
     const data = await this.jsonCall(
       messages,
-      { model: this.textModel(), maxTokens: 500 },
+      { model: input.image ? this.visionModel() : this.textModel(), maxTokens: 500 },
       AnnotateResultSchema
     );
     input.onPrompt?.(toPromptMessages(messages));

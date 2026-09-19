@@ -80,6 +80,7 @@ function createLiveChannel(
       // Reattach the type from the SSE event name before handing it to the UI.
       const names = [
         "board.element",
+        "board.annotate",
         "board.remove",
         "board.text-move",
         "board.pen-move",

@@ -175,6 +175,11 @@ export const TurnRequestSchema = z.discriminatedUnion("kind", [
     questionId: z.string(),
     image: base64JpegSchema.optional(),
   }),
+  z.object({
+    kind: z.literal("annotate"),
+    questionId: z.string(),
+    image: base64JpegSchema,
+  }),
   z.object({ kind: z.literal("board-pen"), element: boardPenElement }),
   z.object({ kind: z.literal("board-shape"), element: boardShapeElement }),
   z.object({ kind: z.literal("board-text"), element: boardTextElement }),
@@ -300,7 +305,14 @@ export const SseEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("tutor.turn"), data: TutorTurnSchema }),
   z.object({
     type: z.literal("board.element"),
-    data: z.object({ element: BoardElementSchema }),
+    data: z.object({
+      element: BoardElementSchema,
+      questionId: z.string().optional(),
+    }),
+  }),
+  z.object({
+    type: z.literal("board.annotate"),
+    data: z.object({ questionId: z.string() }),
   }),
   z.object({
     type: z.literal("board.remove"),
