@@ -87,6 +87,18 @@ a refresh.
 `FakeAdapter` is the default (`CIRCLR_LLM=fake`). All 110 tests run against it
 without network calls or vendor keys per the spec's test discipline.
 
+`OpenCodeAdapter` (`src/lib/agent/opencode-adapter.ts`) is the real vendor seam,
+selected with `CIRCLR_LLM=opencode`. It calls an OpenAI-compatible
+`POST /chat/completions` on OpenCode, defaulting to the **Go** base URL
+(`https://opencode.ai/zen/go/v1`; set `CIRCLR_OPENCODE_PLAN=zen` for Zen
+pay-as-you-go, or `OPENCODE_BASE_URL` to override) using `OPENCODE_API`. Requests
+send `user-agent: circlr-companion/...` and `x-opencode-session` (env
+`OPENCODE_SESSION` or a per-process id) as Go requires. Text roles use
+`CIRCLR_MODEL` (default `deepseek-v4.1-flash`); `extract`/`watch` use
+`CIRCLR_VISION_MODEL` (default `deepseek-v4-flash-vision-exp`) and receive the
+capture JPEG via the `image` field on `ExtractInput`/`WatchInput` (threaded from
+`/material`).
+
 ## 5. Routes
 
 | Verb + path | Purpose | Issue |
@@ -265,10 +277,11 @@ the snapshot was taken. (Spec story #12.)
   restart drops every session. The spec accepts this for the first build
   ("no DBs beyond an in-process store"); `GET /session/:uuid` then 404s and
   the UI starts fresh.
-- **Real vendor adapter:** deferred. The OpenCode Zen gate is documented
-  in the chat history; the seam (`getAdapter()` + `LLMAdapter` interface)
-  has the slot ready. Adapter selection: `CIRCLR_LLM=opencode` (default
-  stays `fake`).
+- **Real vendor adapter:** wired via `getAdapter()` + `LLMAdapter`. Selection:
+  `CIRCLR_LLM=opencode` (default stays `fake`); OpenCode Go by default
+  (`CIRCLR_OPENCODE_PLAN=zen` for Zen), model via `CIRCLR_MODEL` and
+  `CIRCLR_VISION_MODEL`, key via `OPENCODE_API`. Adapter transport failures
+  propagate as 5xx from the route — there is no automatic fallback to `fake`.
 - **Multi-tab / concurrent sessions per uuid:** mutexed via `withLock`;
   two simultaneous `/turn` calls serialize naturally. No fan-out across
   uuids is intentionally exposed.

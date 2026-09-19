@@ -33,6 +33,7 @@ export interface ExtractInput {
   pageIndex: number;
   questionText?: string;
   draftText?: string;
+  image?: string;
 }
 
 export interface TutorInput {
@@ -51,6 +52,7 @@ export interface WatchInput {
   questionText?: string;
   draftText?: string;
   recurrenceCount?: number;
+  image?: string;
 }
 
 export interface IdkInput {
