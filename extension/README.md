@@ -1,7 +1,8 @@
 # Circlr extension
 
-Chrome MV3 extension (TypeScript) that ignites a Session and mounts the
-Companion pane in the browser side panel beside the Document.
+Chrome MV3 extension (TypeScript, no framework, per spec #2 / #3). It ignites a
+Session and mounts the Companion pane in the browser side panel beside the
+Document.
 
 ## Scope
 
@@ -10,6 +11,8 @@ Companion pane in the browser side panel beside the Document.
 - Capture ingest with local buffering and `chrome.storage.session` persistence
 - Capture policy (scroll debounce, dedupe, rate caps) and the LMS drop layer are
   later tickets (#13, #18)
+
+Set up last, after and against contract-freeze work with the `companion/` Next.js app.
 
 ## Prerequisites
 
