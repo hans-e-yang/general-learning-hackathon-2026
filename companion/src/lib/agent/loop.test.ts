@@ -540,6 +540,45 @@ describe("agent/loop canvas", () => {
       evt?.evt.type === "board.element" ? evt.evt.data.questionId : undefined,
     ).toBe("q1");
   });
+
+  it("dismissAnnotation clears tutor marks and keeps student ink", async () => {
+    const { events, publisher } = capture();
+    configureAgentLoop({ adapter: fakeAdapter, publishEvent: publisher });
+    seedSession("u1", {
+      board: [
+        {
+          id: "stale-tutor",
+          tool: "text",
+          author: "tutor",
+          x: 0,
+          y: 0,
+          source: "old",
+          color: "#b85c38",
+          width: 180,
+          fontSize: 16,
+        },
+        {
+          id: "student-1",
+          tool: "pen",
+          author: "student",
+          points: [{ x: 0, y: 0 }],
+          color: "#1a1a1a",
+          strokeWidth: 2,
+        },
+      ],
+    });
+
+    await processTurn("u1", { kind: "dismissAnnotation", questionId: "q1" });
+
+    const state = get("u1")!;
+    expect(state.board.some((el) => el.author === "tutor")).toBe(false);
+    expect(state.board.some((el) => el.id === "student-1")).toBe(true);
+    const evt = events.find((e) => e.evt.type === "board.annotate");
+    expect(evt).toBeDefined();
+    expect(
+      evt?.evt.type === "board.annotate" ? evt.evt.data.questionId : undefined,
+    ).toBe("q1");
+  });
 });
 
 describe("agent/loop extract (#14)", () => {

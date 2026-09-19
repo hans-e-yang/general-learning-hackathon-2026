@@ -383,6 +383,11 @@ export function useMultiBoardSession({
     [],
   );
 
+  /** Student resolved the agent's issue: drop its marks, keep the student's ink. */
+  const dismissTutorMarks = useCallback((questionId: string) => {
+    setBoards((prev) => clearTutorMarks(prev, questionId));
+  }, []);
+
   return {
     questions,
     boards,
@@ -416,6 +421,7 @@ export function useMultiBoardSession({
     movePen,
     moveShape,
     injectTutorElement,
+    dismissTutorMarks,
     channelMode: channel?.mode ?? ("stub" as const),
   };
 }

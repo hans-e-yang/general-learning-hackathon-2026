@@ -180,6 +180,10 @@ export const TurnRequestSchema = z.discriminatedUnion("kind", [
     questionId: z.string(),
     image: base64JpegSchema,
   }),
+  z.object({
+    kind: z.literal("dismissAnnotation"),
+    questionId: z.string(),
+  }),
   z.object({ kind: z.literal("board-pen"), element: boardPenElement }),
   z.object({ kind: z.literal("board-shape"), element: boardShapeElement }),
   z.object({ kind: z.literal("board-text"), element: boardTextElement }),

@@ -283,6 +283,67 @@ body {
   }
 }
 
+.board-annotation-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem 0.85rem;
+  padding: 0.5rem 0.95rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--tutor) 30%, transparent);
+  background: color-mix(in srgb, var(--tutor) 7%, var(--paper));
+}
+
+.board-annotation-bar[data-status="working"] {
+  background: color-mix(in srgb, var(--tutor) 12%, var(--paper));
+}
+
+.board-annotation-message {
+  color: var(--tutor);
+  font-size: 0.82rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.board-annotation-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-left: auto;
+}
+
+.board-annotation-btn {
+  appearance: none;
+  border: 1px solid color-mix(in srgb, var(--tutor) 45%, var(--paper-line));
+  background: transparent;
+  color: var(--tutor);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 0.28rem 0.7rem;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.board-annotation-btn:hover {
+  background: color-mix(in srgb, var(--tutor) 12%, transparent);
+}
+
+.board-annotation-btn.is-active {
+  background: color-mix(in srgb, var(--tutor) 18%, transparent);
+}
+
+.board-annotation-btn.is-primary {
+  background: var(--tutor);
+  border-color: var(--tutor);
+  color: var(--paper);
+}
+
+.board-annotation-btn:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
 .board-empty {
   flex: 1;
   display: flex;

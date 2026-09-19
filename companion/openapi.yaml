@@ -144,6 +144,7 @@ paths:
                 - $ref: "#/components/schemas/AskTurn"
                 - $ref: "#/components/schemas/IdkTurn"
                 - $ref: "#/components/schemas/AnnotateTurn"
+                - $ref: "#/components/schemas/DismissAnnotationTurn"
                 - $ref: "#/components/schemas/BoardPenTurn"
                 - $ref: "#/components/schemas/BoardShapeTurn"
                 - $ref: "#/components/schemas/BoardTextTurn"
@@ -162,6 +163,7 @@ paths:
                   ask: "#/components/schemas/AskTurn"
                   idk: "#/components/schemas/IdkTurn"
                   annotate: "#/components/schemas/AnnotateTurn"
+                  dismissAnnotation: "#/components/schemas/DismissAnnotationTurn"
                   board-pen: "#/components/schemas/BoardPenTurn"
                   board-shape: "#/components/schemas/BoardShapeTurn"
                   board-text: "#/components/schemas/BoardTextTurn"
@@ -306,6 +308,16 @@ components:
         image:
           type: string
           description: Base64-encoded JPEG (FFD8FF prefix) snapshot of the student's canvas
+    DismissAnnotationTurn:
+      type: object
+      required: [kind, questionId]
+      properties:
+        kind:
+          type: string
+          enum: [dismissAnnotation]
+        questionId:
+          type: string
+          description: Board whose Tutor marks the student has resolved
     BoardAuthor:
       type: string
       enum: [student, tutor]

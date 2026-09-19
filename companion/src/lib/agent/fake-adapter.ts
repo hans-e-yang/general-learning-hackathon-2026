@@ -1,4 +1,4 @@
-import type { BoardAnnotationTurn } from "@/contracts/board";
+import type { BoardAnnotationTurn, BoardElement } from "@/contracts/board";
 import { stableQuestionId } from "@/lib/questionIdentity";
 import { composeQuestionLabels } from "@/lib/questionLabel";
 import { looksLikeFinalAnswer } from "./answer-guard";
@@ -247,20 +247,110 @@ export class FakeAdapter implements LLMAdapter {
   async annotate(input: AnnotateInput): Promise<BoardAnnotationTurn[]> {
     const hasScene = Boolean(input.questionText || input.hint || input.board.length > 0);
     if (!hasScene) return [];
-    const id = `tutor-note-${hash32(`${input.questionId ?? ""}:${input.hint ?? ""}`)}`;
+    const seed = hash32(`${input.questionId ?? ""}:${input.hint ?? ""}`);
+    const target = pickTargetRect(input.board);
+    const pad = 14;
     return [
+      {
+        kind: "board-shape",
+        element: {
+          id: `tutor-ring-${seed}`,
+          author: "tutor",
+          shape: "ellipse",
+          x: target.x - pad,
+          y: target.y - pad,
+          width: target.width + pad * 2,
+          height: target.height + pad * 2,
+        },
+      },
       {
         kind: "board-text",
         element: {
-          id,
+          id: `tutor-note-${seed}`,
           author: "tutor",
-          x: 32,
-          y: 32,
-          source: "Check this step.",
+          x: target.x + target.width + 18,
+          y: target.y,
+          source: reasoningComment(input),
         },
       },
     ];
   }
+}
+
+type Rect = { x: number; y: number; width: number; height: number };
+
+const DEFAULT_TARGET: Rect = { x: 80, y: 80, width: 240, height: 140 };
+
+function elementRect(el: BoardElement): Rect | null {
+  if (el.tool === "pen") {
+    if (el.points.length === 0) return null;
+    const xs = el.points.map((p) => p.x);
+    const ys = el.points.map((p) => p.y);
+    const minX = Math.min(...xs);
+    const minY = Math.min(...ys);
+    return { x: minX, y: minY, width: Math.max(...xs) - minX, height: Math.max(...ys) - minY };
+  }
+  if (el.tool === "shape") {
+    return {
+      x: Math.min(el.x, el.x + el.width),
+      y: Math.min(el.y, el.y + el.height),
+      width: Math.abs(el.width),
+      height: Math.abs(el.height),
+    };
+  }
+  if (el.tool === "text") {
+    return { x: el.x, y: el.y, width: el.width, height: el.fontSize * 2 };
+  }
+  return null;
+}
+
+/** Ring the student's most recent mark; fall back to a default region. */
+function pickTargetRect(board: readonly BoardElement[]): Rect {
+  for (let i = board.length - 1; i >= 0; i -= 1) {
+    const el = board[i]!;
+    if (el.author !== "student") continue;
+    const rect = elementRect(el);
+    if (rect && (rect.width > 0 || rect.height > 0)) return rect;
+  }
+  return DEFAULT_TARGET;
+}
+
+const COMMENT_LIMIT = 190;
+
+function clampComment(text: string): string {
+  return text.length <= COMMENT_LIMIT
+    ? text
+    : `${text.slice(0, COMMENT_LIMIT - 1).trimEnd()}…`;
+}
+
+/**
+ * FakeAdapter has no vision, so it reasons from whatever text context it was
+ * given — the tutor hint/student message first, then the draft and question.
+ * The result is a full sentence explaining what to re-examine, never a bare
+ * "check this step".
+ */
+function reasoningComment(input: AnnotateInput): string {
+  const direct = (input.hint ?? input.message ?? "").replace(/\s+/g, " ").trim();
+  if (direct) return clampComment(direct);
+
+  const draft = (input.draftText ?? "").replace(/\s+/g, " ").trim();
+  if (draft) {
+    const snippet = draft.length > 90 ? `${draft.slice(0, 89).trimEnd()}…` : draft;
+    return clampComment(
+      `Your step “${snippet}” may not follow from the line before it. Check which rule justifies that move before continuing.`,
+    );
+  }
+
+  const question = (input.questionText ?? "").replace(/\s+/g, " ").trim();
+  if (question) {
+    const snippet =
+      question.length > 90 ? `${question.slice(0, 89).trimEnd()}…` : question;
+    return clampComment(
+      `Before continuing: restate what “${snippet}” is asking and name the definition each symbol should use.`,
+    );
+  }
+
+  return "Re-examine this step and check that each line follows from the one before it.";
 }
 
 export const fakeAdapter = new FakeAdapter();

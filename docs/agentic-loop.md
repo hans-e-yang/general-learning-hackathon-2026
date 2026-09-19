@@ -289,13 +289,20 @@ endpoint it always did.
   (~5s without student ink), rasterizes the active board to a JPEG, and posts
   `POST /turn` `{ kind:"annotate", questionId, image }`. The loop runs
   `adapter.annotate()` with that snapshot (vision model when an image is
-  attached), clears the agent's previous marks, and streams the new batch. The
-  clear is announced as `board.annotate` `{questionId}` so the client drops its
-  stale Tutor marks before the following `board.element` frames arrive; those
-  frames carry an optional `questionId` so the companion places each mark on the
-  matching per-question board. Anchoring/erasing the student's work is not in the
-  annotation toolset, and annotation failures are swallowed so they never break
-  the tutor turn.
+  attached), clears the agent's previous marks, and streams the new batch. Each
+  batch is one **ring** (an ellipse around the suspected error) plus a
+  one-to-two-sentence **reasoning comment**; `arrangeAnnotations()` re-anchors
+  the text mark to the side of
+  its ring (flipping left near the right edge) so the Tutor never writes over the
+  student's work. The clear is announced as `board.annotate` `{questionId}` so
+  the client drops its stale Tutor marks before the following `board.element`
+  frames arrive; those frames carry an optional `questionId` so the companion
+  places each mark on the matching per-question board. The companion shows a
+  status bar while marks are present — *Working on it* (the idle annotator holds
+  off) and *Resolved* (`dismissAnnotation`, which clears the board's Tutor marks
+  on both sides). Anchoring/erasing the student's work is not in the annotation
+  toolset, and annotation failures are swallowed so they never break the tutor
+  turn.
 
 - **Resume.** `GET /session/:uuid` returns `SessionSnapshot.board`, and the first
   SSE frame (`snapshot`) carries it too, so a refresh re-hydrates the canvas.

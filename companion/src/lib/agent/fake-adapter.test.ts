@@ -294,15 +294,35 @@ describe("fake-adapter/tutor", () => {
 });
 
 describe("fake-adapter/annotate", () => {
-  it("returns a tutor-authored text mark for a scene", async () => {
+  it("rings the error and adds a tutor comment for a scene", async () => {
     const turns = await fakeAdapter.annotate({
       questionId: "q1",
       questionText: "Why does sin(x)/x approach 1?",
       board: [],
     });
-    expect(turns).toHaveLength(1);
-    expect(turns[0].kind).toBe("board-text");
-    expect(turns[0].element.author).toBe("tutor");
+    expect(turns).toHaveLength(2);
+    const shape = turns.find((t) => t.kind === "board-shape");
+    const text = turns.find((t) => t.kind === "board-text");
+    expect(shape?.kind === "board-shape" && shape.element.shape).toBe(
+      "ellipse",
+    );
+    expect(shape?.element.author).toBe("tutor");
+    expect(text?.kind === "board-text" && text.element.author).toBe("tutor");
+    expect(text?.kind === "board-text" && text.element.source).toBeTruthy();
+  });
+
+  it("writes detailed reasoning, not a bare 'check this step'", async () => {
+    const [ring, note] = await fakeAdapter.annotate({
+      questionId: "q1",
+      questionText: "Find the derivative of f(x) = x^2 sin x.",
+      draftText: "f'(x) = 2x sin x",
+      board: [],
+    });
+    expect(ring?.kind).toBe("board-shape");
+    const source = note?.kind === "board-text" ? note.element.source : "";
+    expect(source.toLowerCase()).not.toContain("check this step");
+    expect(source.length).toBeGreaterThan(40);
+    expect(source).toContain("2x sin x");
   });
 
   it("is deterministic for the same scene", async () => {

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { applyBoardTurn } from "@/board/model";
-import type { BoardTurn } from "@/contracts/board";
+import type { BoardAnnotationTurn, BoardTurn } from "@/contracts/board";
 import {
   asBoardAnnotationTurn,
   asBoardTurn,
@@ -18,6 +18,7 @@ import {
   type SessionState,
   type TurnMaterial,
 } from "@/lib/session/types";
+import { arrangeAnnotations } from "./annotate-layout";
 import { getAdapter } from "./index";
 import type {
   AnnotateInput,
@@ -177,9 +178,9 @@ async function annotateBoard(
 ): Promise<void> {
   const { adapter, publishEvent } = depsOrDefault();
   const input: AnnotateInput = { ...ctx, board: state.board };
-  let turns: BoardTurn[];
+  let turns: BoardAnnotationTurn[];
   try {
-    turns = await adapter.annotate(input);
+    turns = arrangeAnnotations(await adapter.annotate(input));
   } catch {
     return;
   }
@@ -749,6 +750,15 @@ export async function processTurn(uuid: string, turn: TurnRequest): Promise<void
           draftText: state.drafts[turn.questionId],
           captureHash: lastCapture?.hash,
           image: turn.image,
+        });
+        return;
+      }
+      case "dismissAnnotation": {
+        const { publishEvent } = depsOrDefault();
+        state.board = state.board.filter((el) => el.author !== "tutor");
+        publishEvent(uuid, {
+          type: "board.annotate",
+          data: { questionId: turn.questionId },
         });
         return;
       }

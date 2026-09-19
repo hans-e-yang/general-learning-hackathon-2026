@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useRef,
   useState,
   useSyncExternalStore,
 } from "react";
@@ -67,7 +68,24 @@ function writeSessionToUrl(uuid: string): void {
   window.dispatchEvent(new Event("popstate"));
 }
 
+type AnnotationStatus = "idle" | "working" | "resolved";
+
 function BoardShell({ sessionUuid }: { sessionUuid: string }) {
+  const [annotationStatus, setAnnotationStatusState] = useState<
+    Record<string, AnnotationStatus>
+  >({});
+  const annotationStatusRef = useRef<Record<string, AnnotationStatus>>({});
+  const setStatusFor = useCallback(
+    (questionId: string, status: AnnotationStatus) => {
+      setAnnotationStatusState((prev) => {
+        const next = { ...prev, [questionId]: status };
+        annotationStatusRef.current = next;
+        return next;
+      });
+    },
+    [],
+  );
+
   /** Idle canvas snapshot → agent annotations come back over the board SSE. */
   const annotateOnIdle = useCallback(
     async ({
@@ -77,6 +95,10 @@ function BoardShell({ sessionUuid }: { sessionUuid: string }) {
       questionId: string;
       elements: BoardElement[];
     }) => {
+      // The student already acknowledged the issue; don't interrupt.
+      if ((annotationStatusRef.current[questionId] ?? "idle") === "working") {
+        return;
+      }
       if (elements.length === 0) return;
       const image = renderBoardToJpeg(elements);
       if (!image) return;
@@ -123,6 +145,7 @@ function BoardShell({ sessionUuid }: { sessionUuid: string }) {
     moveText,
     movePen,
     moveShape,
+    dismissTutorMarks,
   } = useMultiBoardSession({
     sessionUuid,
     mode: "live",
@@ -172,6 +195,44 @@ function BoardShell({ sessionUuid }: { sessionUuid: string }) {
     neighborQuestionId(questions, activeQuestionId, 1) !== null;
   const empty = questions.length === 0;
 
+  const activeStatus: AnnotationStatus = activeQuestionId
+    ? (annotationStatus[activeQuestionId] ?? "idle")
+    : "idle";
+  const hasTutorMarks = elements.some((el) => el.author === "tutor");
+  const showAnnotationBar = hasTutorMarks || activeStatus === "working";
+  const tutorSignature = elements
+    .filter((el) => el.author === "tutor")
+    .map((el) => el.id)
+    .join("|");
+
+  // A fresh batch of marks after "Resolved" starts a new issue.
+  useEffect(() => {
+    if (!activeQuestionId || !tutorSignature) return;
+    if (annotationStatusRef.current[activeQuestionId] === "resolved") {
+      setStatusFor(activeQuestionId, "idle");
+    }
+  }, [activeQuestionId, tutorSignature, setStatusFor]);
+
+  const markWorking = useCallback(() => {
+    if (activeQuestionId) setStatusFor(activeQuestionId, "working");
+  }, [activeQuestionId, setStatusFor]);
+
+  const markResolved = useCallback(() => {
+    if (!activeQuestionId) return;
+    dismissTutorMarks(activeQuestionId);
+    setStatusFor(activeQuestionId, "resolved");
+    void fetch(`/session/${sessionUuid}/turn`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        kind: "dismissAnnotation",
+        questionId: activeQuestionId,
+      }),
+    }).catch(() => {
+      /* local dismissal already stands; the agent will re-mark on the next edit */
+    });
+  }, [activeQuestionId, dismissTutorMarks, sessionUuid, setStatusFor]);
+
   return (
     <div className="board-app">
       <BoardToolbar
@@ -199,6 +260,41 @@ function BoardShell({ sessionUuid }: { sessionUuid: string }) {
           </p>
         ) : null}
       </div>
+      {showAnnotationBar ? (
+        <div
+          className="board-annotation-bar"
+          data-status={activeStatus}
+          role="status"
+          aria-live="polite"
+        >
+          <span className="board-annotation-message">
+            {activeStatus === "working"
+              ? "Resolving — the Tutor will hold off."
+              : "The Tutor circled a step to reconsider."}
+          </span>
+          <div className="board-annotation-actions">
+            <button
+              type="button"
+              className={
+                activeStatus === "working"
+                  ? "board-annotation-btn is-active"
+                  : "board-annotation-btn"
+              }
+              aria-pressed={activeStatus === "working"}
+              onClick={markWorking}
+            >
+              Working on it
+            </button>
+            <button
+              type="button"
+              className="board-annotation-btn is-primary"
+              onClick={markResolved}
+            >
+              Resolved
+            </button>
+          </div>
+        </div>
+      ) : null}
       <BoardCarousel
         label={activeLabel}
         canPrev={canPrev}

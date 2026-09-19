@@ -178,6 +178,28 @@ describe("contracts: board turns", () => {
     });
     expect(r.success).toBe(false);
   });
+
+  it("requires a canvas image on the annotate turn", () => {
+    expect(
+      TurnRequestSchema.safeParse({
+        kind: "annotate",
+        questionId: "q1",
+        image: FIXTURE_JPEG_B64,
+      }).success,
+    ).toBe(true);
+    expect(
+      TurnRequestSchema.safeParse({ kind: "annotate", questionId: "q1" }).success,
+    ).toBe(false);
+  });
+
+  it("accepts a dismissAnnotation turn", () => {
+    expect(
+      TurnRequestSchema.safeParse({
+        kind: "dismissAnnotation",
+        questionId: "q1",
+      }).success,
+    ).toBe(true);
+  });
 });
 
 describe("contracts: board SSE events", () => {
@@ -209,6 +231,14 @@ describe("contracts: board SSE events", () => {
 
   it("rejects a board.element event without an element", () => {
     expect(safeParseSseEvent({ type: "board.element", data: {} }).success).toBe(false);
+  });
+
+  it("accepts a board.annotate event", () => {
+    const ev = { type: "board.annotate", data: { questionId: "q1" } };
+    expect(safeParseSseEvent(ev).success).toBe(true);
+    expect(safeParseSseEvent({ type: "board.annotate", data: {} }).success).toBe(
+      false,
+    );
   });
 });
 
@@ -357,6 +387,7 @@ describe("contracts: openapi.yaml", () => {
     expect(schemas).toHaveProperty("BoardPenTurn");
     expect(schemas).toHaveProperty("BoardShapeMoveTurn");
     expect(schemas).toHaveProperty("AnnotateTurn");
+    expect(schemas).toHaveProperty("DismissAnnotationTurn");
     expect(schemas).toHaveProperty("BoardAnnotateEvent");
     const sse = schemas.SseEvent as {
       discriminator: { mapping: Record<string, string> };
