@@ -44,6 +44,8 @@ const QUESTION_BANK: { label: string; text: string }[] = [
 const TUTOR_SYSTEM =
   "You are a Socratic tutor inside a study companion. (fake adapter)";
 const IDK_SYSTEM = 'A student pressed "I don\'t know". (fake adapter)';
+const ANNOTATE_SYSTEM =
+  "You mark a shared whiteboard beside a student working on a question. (fake adapter)";
 
 function promptPair(system: string, user: string): PromptMessage[] {
   return [
@@ -245,6 +247,13 @@ export class FakeAdapter implements LLMAdapter {
   }
 
   async annotate(input: AnnotateInput): Promise<BoardAnnotationTurn[]> {
+    input.onPrompt?.(
+      promptPair(
+        ANNOTATE_SYSTEM,
+        `Question:\n${(input.questionText ?? "").trim() || "(none)"}\n\n` +
+          `Student draft:\n${(input.draftText ?? "").trim() || "(no attempt yet)"}`
+      )
+    );
     const hasScene = Boolean(input.questionText || input.hint || input.board.length > 0);
     if (!hasScene) return [];
     const seed = hash32(`${input.questionId ?? ""}:${input.hint ?? ""}`);

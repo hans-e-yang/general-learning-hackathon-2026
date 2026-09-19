@@ -79,6 +79,43 @@ describe("GET /session/:uuid/inspector", () => {
     expect(body.context[0].image).toBeUndefined();
   });
 
+  it("includes board-snapshot and annotation entries and strips their images", async () => {
+    const s = seedSession();
+    const snapshot: ContextEntry = {
+      id: "ctx-2",
+      at: 2002,
+      kind: "board-snapshot",
+      questionId: "q1",
+      image: JPEG_B64,
+    };
+    const annotation: ContextEntry = {
+      id: "ctx-3",
+      at: 2003,
+      kind: "annotation",
+      trigger: "idle",
+      sourceId: "ctx-2",
+      questionId: "q1",
+      prompt: [{ role: "user", content: "mark it" }],
+      input: { questionText: "x", image: JPEG_B64 },
+      output: [],
+      published: [{ type: "board.annotate" }],
+    };
+    s.context.push(snapshot, annotation);
+    _seed(s);
+
+    const full = (await (await callInspector()).json()) as {
+      context: { kind: string; image?: string; input?: { image?: string } }[];
+    };
+    expect(full.context.find((c) => c.kind === "board-snapshot")?.image).toBe(JPEG_B64);
+    expect(full.context.find((c) => c.kind === "annotation")?.input?.image).toBe(JPEG_B64);
+
+    const meta = (await (await callInspector("?images=0")).json()) as {
+      context: { kind: string; image?: string; input?: { image?: string } }[];
+    };
+    expect(meta.context.find((c) => c.kind === "board-snapshot")?.image).toBeUndefined();
+    expect(meta.context.find((c) => c.kind === "annotation")?.input?.image).toBeUndefined();
+  });
+
   it("404s for an unknown session", async () => {
     const res = await getInspector(
       new Request("http://test.local/session/missing/inspector"),

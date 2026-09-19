@@ -9,11 +9,13 @@ export const dynamic = "force-dynamic";
 function withoutImages(entry: ContextEntry): ContextEntry {
   const copy: Record<string, unknown> = { ...entry };
   if ("image" in copy) delete copy.image;
-  const material = copy.material;
-  if (material && typeof material === "object") {
-    const next: Record<string, unknown> = { ...(material as Record<string, unknown>) };
-    delete next.image;
-    copy.material = next;
+  for (const key of ["material", "input"] as const) {
+    const nested = copy[key];
+    if (nested && typeof nested === "object") {
+      const next: Record<string, unknown> = { ...(nested as Record<string, unknown>) };
+      delete next.image;
+      copy[key] = next;
+    }
   }
   return copy as unknown as ContextEntry;
 }

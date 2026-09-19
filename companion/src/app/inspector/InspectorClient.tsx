@@ -20,6 +20,8 @@ const SSE_EVENT_TYPES = [
   "tutor.turn",
   "flag",
   "error",
+  "board.annotate",
+  "board.element",
 ] as const;
 
 function imageSrc(image?: string): string | undefined {
@@ -46,6 +48,8 @@ function subscribeUuid(onStoreChange: () => void) {
 function entryImage(entry: ContextEntry): string | undefined {
   if (entry.kind === "capture" || entry.kind === "draft") return entry.image;
   if (entry.kind === "tutor" || entry.kind === "idk") return entry.material.image;
+  if (entry.kind === "board-snapshot") return entry.image;
+  if (entry.kind === "annotation") return entry.input.image;
   return undefined;
 }
 
@@ -159,6 +163,72 @@ function EntryBody({ entry }: { entry: ContextEntry }) {
           <Line k="reasoning" v={entry.verdict.reasoning} />
         </>
       );
+    case "board-snapshot":
+      return (
+        <>
+          <Line k="request" v="annotate" />
+          <Line k="question" v={entry.questionId?.slice(0, 8) ?? "(none)"} />
+        </>
+      );
+    case "annotation": {
+      const counts: Record<string, number> = {};
+      const notes: string[] = [];
+      for (const mark of entry.output) {
+        counts[mark.kind] = (counts[mark.kind] ?? 0) + 1;
+        if (mark.kind === "board-text") notes.push(mark.element.source);
+      }
+      return (
+        <>
+          <Line k="trigger" v={entry.trigger} />
+          {entry.sourceId ? <Line k="source" v={entry.sourceId.slice(0, 8)} /> : null}
+          <Line
+            k="input"
+            v={
+              entry.input.hint ??
+              entry.input.message ??
+              entry.input.draftText ??
+              entry.input.questionText ??
+              "(none)"
+            }
+          />
+          {entry.input.captureHash ? (
+            <Line k="capture" v={entry.input.captureHash.slice(0, 8)} />
+          ) : null}
+          <Line
+            k="output"
+            v={
+              entry.output.length === 0
+                ? "(no marks)"
+                : Object.entries(counts)
+                    .map(([kind, n]) => `${kind.replace("board-", "")}\u00d7${n}`)
+                    .join(", ")
+            }
+          />
+          {notes.length > 0 ? <Line k="notes" v={notes.join(" | ")} /> : null}
+          <Line
+            k="published"
+            v={
+              entry.published.length > 0
+                ? entry.published.map((p) => p.type).join(", ")
+                : "(none)"
+            }
+          />
+          {entry.error ? <Line k="error" v={entry.error} /> : null}
+          {entry.prompt.length > 0 ? (
+            <details className="mt-1">
+              <summary className="cursor-pointer text-[11px] text-zinc-500">
+                prompt ({entry.prompt.length})
+              </summary>
+              <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded bg-zinc-950 p-2 text-[10px] text-zinc-400">
+                {entry.prompt
+                  .map((m) => `[${m.role}]\n${m.content}`)
+                  .join("\n\n")}
+              </pre>
+            </details>
+          ) : null}
+        </>
+      );
+    }
     case "board":
       return <Line k="turn" v={entry.turn.kind} />;
   }
@@ -179,6 +249,10 @@ function kindColor(kind: ContextEntry["kind"]): string {
       return "text-orange-300 border-orange-800";
     case "board":
       return "text-zinc-400 border-zinc-700";
+    case "board-snapshot":
+      return "text-indigo-300 border-indigo-800";
+    case "annotation":
+      return "text-emerald-300 border-emerald-800";
   }
 }
 

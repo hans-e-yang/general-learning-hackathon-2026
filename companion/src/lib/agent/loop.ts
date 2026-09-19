@@ -9,10 +9,12 @@ import {
   type WatchVerdict,
 } from "@/lib/contracts";
 import { normalizeQuestionLabel, composeQuestionLabels } from "@/lib/questionLabel";
+import { isInspectorEnabled } from "@/lib/inspector";
 import { publish } from "@/lib/session/bus";
 import { get, withLock } from "@/lib/session/store";
 import {
   SILENT_THRESHOLD,
+  type AnnotationTrigger,
   type ContextEntry,
   type GhostSummaryEntry,
   type SessionState,
@@ -93,11 +95,20 @@ type ContextEntryDraft =
   | Omit<Extract<ContextEntry, { kind: "draft" }>, "id" | "at">
   | Omit<Extract<ContextEntry, { kind: "tutor" | "idk" }>, "id" | "at">
   | Omit<Extract<ContextEntry, { kind: "watch" }>, "id" | "at">
-  | Omit<Extract<ContextEntry, { kind: "board" }>, "id" | "at">;
+  | Omit<Extract<ContextEntry, { kind: "board" }>, "id" | "at">
+  | Omit<Extract<ContextEntry, { kind: "board-snapshot" }>, "id" | "at">
+  | Omit<Extract<ContextEntry, { kind: "annotation" }>, "id" | "at">;
 
-/** Append one event to the Session transcript. */
-function recordContext(state: SessionState, entry: ContextEntryDraft): void {
-  state.context.push({ id: randomUUID(), at: Date.now(), ...entry } as ContextEntry);
+/**
+ * Append one event to the Session transcript and return its id. The transcript
+ * has exactly one consumer — the inspector — so nothing is stored outside
+ * inspect mode. Returns undefined when recording is skipped.
+ */
+function recordContext(state: SessionState, entry: ContextEntryDraft): string | undefined {
+  if (!isInspectorEnabled()) return undefined;
+  const id = randomUUID();
+  state.context.push({ id, at: Date.now(), ...entry } as ContextEntry);
+  return id;
 }
 
 /** Apply a student canvas turn to canonical board state and mirror it over SSE. */
@@ -174,42 +185,76 @@ async function annotateBoard(
     message?: string;
     captureHash?: string;
     image?: string;
-  }
+  },
+  trigger: AnnotationTrigger,
+  sourceId?: string
 ): Promise<void> {
   const { adapter, publishEvent } = depsOrDefault();
-  const input: AnnotateInput = { ...ctx, board: state.board };
-  let turns: BoardAnnotationTurn[];
+  let prompt: PromptMessage[] = [];
+  const input: AnnotateInput = {
+    ...ctx,
+    board: state.board,
+    onPrompt: (messages) => {
+      prompt = messages;
+    },
+  };
+  let turns: BoardAnnotationTurn[] = [];
+  let error: string | undefined;
   try {
     turns = arrangeAnnotations(await adapter.annotate(input));
-  } catch {
-    return;
+  } catch (err) {
+    error = err instanceof Error ? err.message : String(err);
   }
 
-  // Replace the agent's prior marks so repeated snapshots don't pile up.
-  state.board = state.board.filter((el) => el.author !== "tutor");
-  if (ctx.questionId) {
-    publishEvent(uuid, {
-      type: "board.annotate",
-      data: { questionId: ctx.questionId },
-    });
-  }
-
-  for (const raw of turns) {
-    const turn = asBoardAnnotationTurn(raw);
-    if (!turn) continue;
-    const before = state.board.length;
-    state.board = applyBoardTurn(state.board, turn);
-    const element = state.board[state.board.length - 1];
-    if (state.board.length > before && element) {
+  const published: { type: string; elementId?: string }[] = [];
+  if (!error) {
+    // Replace the agent's prior marks so repeated snapshots don't pile up.
+    state.board = state.board.filter((el) => el.author !== "tutor");
+    if (ctx.questionId) {
       publishEvent(uuid, {
-        type: "board.element",
-        data: {
-          element,
-          ...(ctx.questionId ? { questionId: ctx.questionId } : {}),
-        },
+        type: "board.annotate",
+        data: { questionId: ctx.questionId },
       });
+      published.push({ type: "board.annotate" });
+    }
+
+    for (const raw of turns) {
+      const turn = asBoardAnnotationTurn(raw);
+      if (!turn) continue;
+      const before = state.board.length;
+      state.board = applyBoardTurn(state.board, turn);
+      const element = state.board[state.board.length - 1];
+      if (state.board.length > before && element) {
+        publishEvent(uuid, {
+          type: "board.element",
+          data: {
+            element,
+            ...(ctx.questionId ? { questionId: ctx.questionId } : {}),
+          },
+        });
+        published.push({ type: "board.element", elementId: element.id });
+      }
     }
   }
+
+  recordContext(state, {
+    kind: "annotation",
+    trigger,
+    sourceId,
+    questionId: ctx.questionId,
+    prompt,
+    input: {
+      questionText: ctx.questionText,
+      draftText: ctx.draftText,
+      hint: ctx.hint,
+      message: ctx.message,
+      captureHash: ctx.captureHash,
+      image: ctx.image,
+    },
+    output: turns,
+    published,
+    error,
+  });
 }
 
 function nextLevel(history: TutorTurn[], requestedLevel: number): number {
@@ -413,7 +458,7 @@ export async function watchOnCapture(
       },
     };
     const tutorTurn = await adapter.tutor(tutorInput);
-    recordContext(state, {
+    const tutorSourceId = recordContext(state, {
       kind: "tutor",
       questionId,
       prompt,
@@ -424,13 +469,19 @@ export async function watchOnCapture(
     thread.push(tutorTurn);
     state.threads[questionId] = thread;
     publishEvent(uuid, { type: "tutor.turn", data: tutorTurn });
-    await annotateBoard(state, uuid, {
-      questionId,
-      questionText: q.text,
-      draftText: draft,
-      hint: tutorTurn.hint,
-      captureHash,
-    });
+    await annotateBoard(
+      state,
+      uuid,
+      {
+        questionId,
+        questionText: q.text,
+        draftText: draft,
+        hint: tutorTurn.hint,
+        captureHash,
+      },
+      "watch",
+      tutorSourceId
+    );
   });
   return verdict;
 }
@@ -544,7 +595,7 @@ export async function processTurn(uuid: string, turn: TurnRequest): Promise<void
           },
         };
         const tutorTurn = await adapter.tutor(input);
-        recordContext(state, {
+        const tutorSourceId = recordContext(state, {
           kind: "tutor",
           questionId: turn.questionId,
           prompt,
@@ -555,13 +606,19 @@ export async function processTurn(uuid: string, turn: TurnRequest): Promise<void
         thread.push(tutorTurn);
         state.threads[turn.questionId] = thread;
         publishEvent(uuid, { type: "tutor.turn", data: tutorTurn });
-        await annotateBoard(state, uuid, {
-          questionId: turn.questionId,
-          questionText: q?.text,
-          draftText: state.drafts[turn.questionId],
-          hint: tutorTurn.hint,
-          captureHash: input.captureHash,
-        });
+        await annotateBoard(
+          state,
+          uuid,
+          {
+            questionId: turn.questionId,
+            questionText: q?.text,
+            draftText: state.drafts[turn.questionId],
+            hint: tutorTurn.hint,
+            captureHash: input.captureHash,
+          },
+          "requestCheck",
+          tutorSourceId
+        );
 
         const draft = state.drafts[turn.questionId] ?? "";
         const verdict = await adapter.scout({
@@ -637,7 +694,7 @@ export async function processTurn(uuid: string, turn: TurnRequest): Promise<void
             prompt = messages;
           },
         });
-        recordContext(state, {
+        const tutorSourceId = recordContext(state, {
           kind: "tutor",
           questionId: turn.questionId,
           prompt,
@@ -653,13 +710,19 @@ export async function processTurn(uuid: string, turn: TurnRequest): Promise<void
         thread.push(tutorTurn);
         state.threads[turn.questionId] = thread;
         publishEvent(uuid, { type: "tutor.turn", data: tutorTurn });
-        await annotateBoard(state, uuid, {
-          questionId: turn.questionId,
-          questionText: q?.text,
-          draftText: draft,
-          hint: tutorTurn.hint,
-          captureHash: lastCapture?.hash,
-        });
+        await annotateBoard(
+          state,
+          uuid,
+          {
+            questionId: turn.questionId,
+            questionText: q?.text,
+            draftText: draft,
+            hint: tutorTurn.hint,
+            captureHash: lastCapture?.hash,
+          },
+          "assess",
+          tutorSourceId
+        );
         return;
       }
       case "ask": {
@@ -685,7 +748,7 @@ export async function processTurn(uuid: string, turn: TurnRequest): Promise<void
           },
         };
         const tutorTurn = await adapter.tutor(input);
-        recordContext(state, {
+        const tutorSourceId = recordContext(state, {
           kind: "tutor",
           questionId: turn.questionId,
           prompt,
@@ -696,14 +759,20 @@ export async function processTurn(uuid: string, turn: TurnRequest): Promise<void
         thread.push(tutorTurn);
         state.threads[turn.questionId] = thread;
         publishEvent(uuid, { type: "tutor.turn", data: tutorTurn });
-        await annotateBoard(state, uuid, {
-          questionId: turn.questionId,
-          questionText: q?.text,
-          draftText: state.drafts[turn.questionId],
-          hint: tutorTurn.hint,
-          message: turn.message,
-          captureHash: input.captureHash,
-        });
+        await annotateBoard(
+          state,
+          uuid,
+          {
+            questionId: turn.questionId,
+            questionText: q?.text,
+            draftText: state.drafts[turn.questionId],
+            hint: tutorTurn.hint,
+            message: turn.message,
+            captureHash: input.captureHash,
+          },
+          "ask",
+          tutorSourceId
+        );
         return;
       }
       case "idk": {
@@ -721,7 +790,7 @@ export async function processTurn(uuid: string, turn: TurnRequest): Promise<void
           },
         };
         const tutorTurn = await adapter.idk(input);
-        recordContext(state, {
+        const tutorSourceId = recordContext(state, {
           kind: "idk",
           questionId: turn.questionId,
           prompt,
@@ -732,25 +801,42 @@ export async function processTurn(uuid: string, turn: TurnRequest): Promise<void
         thread.push(tutorTurn);
         state.threads[turn.questionId] = thread;
         publishEvent(uuid, { type: "tutor.turn", data: tutorTurn });
-        await annotateBoard(state, uuid, {
-          questionId: turn.questionId,
-          questionText: q?.text,
-          draftText: state.drafts[turn.questionId],
-          hint: tutorTurn.hint,
-        });
+        await annotateBoard(
+          state,
+          uuid,
+          {
+            questionId: turn.questionId,
+            questionText: q?.text,
+            draftText: state.drafts[turn.questionId],
+            hint: tutorTurn.hint,
+          },
+          "idk",
+          tutorSourceId
+        );
         return;
       }
       case "annotate": {
         const q = findQuestion(state, turn.questionId);
         const lastCapture =
           state.captures.length > 0 ? state.captures[state.captures.length - 1] : undefined;
-        await annotateBoard(state, uuid, {
+        const snapshotId = recordContext(state, {
+          kind: "board-snapshot",
           questionId: turn.questionId,
-          questionText: q?.text,
-          draftText: state.drafts[turn.questionId],
-          captureHash: lastCapture?.hash,
           image: turn.image,
         });
+        await annotateBoard(
+          state,
+          uuid,
+          {
+            questionId: turn.questionId,
+            questionText: q?.text,
+            draftText: state.drafts[turn.questionId],
+            captureHash: lastCapture?.hash,
+            image: turn.image,
+          },
+          "idle",
+          snapshotId
+        );
         return;
       }
       case "dismissAnnotation": {

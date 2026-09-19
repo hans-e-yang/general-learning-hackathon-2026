@@ -53,3 +53,7 @@ One Document opened in the Split View, in exactly one mode, from opening to expo
 **Board**:
 One freehand canvas per extracted question in a Session, soft-titled by the question's vision `label` (e.g. `1a`, `2`). The student works exclusively on the active board (pen strokes, eraser, text); Tutor marks (later) remain visually distinguished from the student's. The Board never contains a final answer written by the Tutor.
 _Avoid_: canvas, jamboard, whiteboard app
+
+**Annotation**:
+The Tutor's additive marks on a Board, produced by a single annotation pass in response to the student's work. Visually distinguished from the student's ink, clearable by the student as resolved, and never a final answer.
+_Avoid_: hint, note (an Annotation is drawn, not spoken)

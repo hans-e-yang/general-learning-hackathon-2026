@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { clearForTests as clearBus, type BusEvent } from "@/lib/session/bus";
 import { clearForTests as clearStore, _seed, get } from "@/lib/session/store";
 import type { SessionState } from "@/lib/session/types";
@@ -197,7 +197,8 @@ describe("agent/loop context memory", () => {
     await processTurn("u1", turn);
 
     const state = get("u1")!;
-    expect(state.context).toHaveLength(1);
+    // ask records the tutor turn, then the annotation pass it triggers.
+    expect(state.context.map((c) => c.kind)).toEqual(["tutor", "annotation"]);
     const [entry] = state.context;
     expect(entry.kind).toBe("tutor");
     if (entry.kind !== "tutor") throw new Error("expected tutor entry");
@@ -210,6 +211,11 @@ describe("agent/loop context memory", () => {
     expect(entry.material.captureHash).toBe("abcabcabcabcabca");
     expect(entry.material.image).toBe("data:image/jpeg;base64,AAAA");
     expect(entry.output).toEqual(state.threads.q1[0]);
+
+    const annotation = state.context[1];
+    if (annotation.kind !== "annotation") throw new Error("expected annotation entry");
+    expect(annotation.trigger).toBe("ask");
+    expect(annotation.sourceId).toBe(entry.id);
   });
 
   it("records the whole conversation: extraction, answer, assessment, tutor", async () => {
@@ -226,8 +232,9 @@ describe("agent/loop context memory", () => {
     await processTurn("u1", { kind: "requestCheck", questionId: qid });
 
     const kinds = get("u1")!.context.map((c) => c.kind);
-    // extraction (question) -> draft (student answer) -> tutor (hint) -> draft (post-check tick)
-    expect(kinds).toEqual(["extraction", "draft", "tutor", "draft"]);
+    // extraction (question) -> draft (student answer) -> tutor (hint)
+    // -> annotation (tutor marks) -> draft (post-check tick)
+    expect(kinds).toEqual(["extraction", "draft", "tutor", "annotation", "draft"]);
 
     const extraction = get("u1")!.context[0];
     if (extraction.kind !== "extraction") throw new Error("expected extraction");
@@ -290,8 +297,88 @@ describe("agent/loop context memory", () => {
     await processTurn("u1", { kind: "idk", questionId: "q1" });
 
     const state = get("u1")!;
-    expect(state.context).toHaveLength(1);
+    // idk records the turn, then the annotation pass it triggers.
+    expect(state.context.map((c) => c.kind)).toEqual(["idk", "annotation"]);
     expect(state.context[0].output).toEqual(state.threads.q1[0]);
+    const annotation = state.context[1];
+    if (annotation.kind !== "annotation") throw new Error("expected annotation entry");
+    expect(annotation.trigger).toBe("idk");
+    expect(annotation.sourceId).toBe(state.context[0].id);
+  });
+});
+
+describe("agent/loop annotation passes", () => {
+  const IMG = "data:image/jpeg;base64,/9j/AAAA";
+
+  it("records a board-snapshot then an annotation for an idle turn", async () => {
+    const { publisher } = capture();
+    configureAgentLoop({ adapter: fakeAdapter, publishEvent: publisher });
+    seedSession("u1", {
+      worksheet: [{ id: "q1", index: 0, text: "x", status: "blocked" }],
+    });
+
+    await processTurn("u1", { kind: "annotate", questionId: "q1", image: IMG });
+
+    const state = get("u1")!;
+    expect(state.context.map((c) => c.kind)).toEqual(["board-snapshot", "annotation"]);
+
+    const snapshot = state.context[0];
+    if (snapshot.kind !== "board-snapshot") throw new Error("expected board-snapshot");
+    expect(snapshot.questionId).toBe("q1");
+    expect(snapshot.image).toBe(IMG);
+
+    const annotation = state.context[1];
+    if (annotation.kind !== "annotation") throw new Error("expected annotation");
+    expect(annotation.trigger).toBe("idle");
+    expect(annotation.sourceId).toBe(snapshot.id);
+    expect(annotation.input.image).toBe(IMG);
+    expect(annotation.input.questionText).toBe("x");
+    expect(annotation.prompt.length).toBeGreaterThan(0);
+    expect(annotation.error).toBeUndefined();
+    expect(annotation.output.length).toBeGreaterThan(0);
+    // One clear frame plus one element frame per emitted mark.
+    expect(annotation.published).toHaveLength(annotation.output.length + 1);
+    expect(annotation.published[0].type).toBe("board.annotate");
+  });
+
+  it("records a failed annotation pass with its error and no marks", async () => {
+    const { publisher } = capture();
+    configureAgentLoop({
+      adapter: stubAdapter({
+        annotate: async () => {
+          throw new Error("boom");
+        },
+      }),
+      publishEvent: publisher,
+    });
+    seedSession("u1", {
+      worksheet: [{ id: "q1", index: 0, text: "x", status: "blocked" }],
+    });
+
+    await processTurn("u1", { kind: "annotate", questionId: "q1", image: IMG });
+
+    const annotation = get("u1")!.context.find((c) => c.kind === "annotation");
+    if (annotation?.kind !== "annotation") throw new Error("expected annotation");
+    expect(annotation.error).toBe("boom");
+    expect(annotation.output).toEqual([]);
+    expect(annotation.published).toEqual([]);
+  });
+
+  it("stores nothing when the inspector is disabled", async () => {
+    const { publisher } = capture();
+    configureAgentLoop({ adapter: fakeAdapter, publishEvent: publisher });
+    seedSession("u1", {
+      worksheet: [{ id: "q1", index: 0, text: "x", status: "blocked" }],
+    });
+
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("CIRCLR_INSPECTOR", "");
+    try {
+      await processTurn("u1", { kind: "annotate", questionId: "q1", image: IMG });
+      expect(get("u1")!.context).toHaveLength(0);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });
 

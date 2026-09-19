@@ -1,4 +1,4 @@
-import type { BoardElement, BoardTurn } from "@/contracts/board";
+import type { BoardAnnotationTurn, BoardElement, BoardTurn } from "@/contracts/board";
 import type { PromptMessage } from "@/lib/agent/llm-adapter";
 import type {
   AssessmentStatus,
@@ -87,10 +87,48 @@ export interface BoardContextEntry extends ContextEntryBase {
   turn: BoardTurn;
 }
 
+/** What caused an annotation pass. */
+export type AnnotationTrigger =
+  | "idle"
+  | "requestCheck"
+  | "ask"
+  | "idk"
+  | "assess"
+  | "watch"
+  | "manual";
+
+/** The student's Companion shipped a whole-Board snapshot to request an annotation pass. */
+export interface BoardSnapshotContextEntry extends ContextEntryBase {
+  kind: "board-snapshot";
+  questionId?: string;
+  image?: string;
+}
+
+/** One annotation pass: the Tutor LLM ran and produced marks on the Board. */
+export interface AnnotationContextEntry extends ContextEntryBase {
+  kind: "annotation";
+  trigger: AnnotationTrigger;
+  /** The transcript entry that triggered this pass, when one exists. */
+  sourceId?: string;
+  prompt: PromptMessage[];
+  input: {
+    questionText?: string;
+    draftText?: string;
+    hint?: string;
+    message?: string;
+    captureHash?: string;
+    image?: string;
+  };
+  output: BoardAnnotationTurn[];
+  /** The `board.*` frames published to the frontend as a result. */
+  published: { type: string; elementId?: string }[];
+  error?: string;
+}
+
 /**
  * Append-only transcript of everything that happened in a Session, in order:
  * captures, extracted questions, student answers, assessments, tutor turns,
- * watcher verdicts, and canvas edits.
+ * watcher verdicts, canvas edits, and Board annotation passes.
  */
 export type ContextEntry =
   | CaptureContextEntry
@@ -98,7 +136,9 @@ export type ContextEntry =
   | DraftContextEntry
   | TutorContextEntry
   | WatchContextEntry
-  | BoardContextEntry;
+  | BoardContextEntry
+  | BoardSnapshotContextEntry
+  | AnnotationContextEntry;
 
 export interface CaptureMeta {
   captureId: string;
