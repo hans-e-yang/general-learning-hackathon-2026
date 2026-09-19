@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useSyncExternalStore } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import { BoardCarousel } from "@/board/BoardCarousel";
 import { BoardJumpStrip } from "@/board/BoardJumpStrip";
 import { BoardSurface } from "@/board/BoardSurface";
@@ -79,8 +79,6 @@ function BoardShell({ sessionUuid }: { sessionUuid: string }) {
     neighborQuestionId(questions, activeQuestionId, 1) !== null;
   const empty = questions.length === 0;
 
-  const touchStartX = useRef<number | null>(null);
-
   return (
     <div className="board-app">
       <BoardToolbar
@@ -108,22 +106,7 @@ function BoardShell({ sessionUuid }: { sessionUuid: string }) {
         onNext={goNext}
         empty={empty}
       >
-        <div
-          className="board-surface-wrap"
-          onTouchStart={(e) => {
-            touchStartX.current = e.changedTouches[0]?.clientX ?? null;
-          }}
-          onTouchEnd={(e) => {
-            const start = touchStartX.current;
-            touchStartX.current = null;
-            if (start === null) return;
-            const end = e.changedTouches[0]?.clientX;
-            if (end === undefined) return;
-            const delta = end - start;
-            if (delta > 50) goPrev();
-            else if (delta < -50) goNext();
-          }}
-        >
+        <div className="board-stage">
           <BoardSurface
             key={activeQuestionId ?? "empty"}
             elements={elements}

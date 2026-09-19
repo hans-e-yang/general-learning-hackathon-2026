@@ -326,6 +326,13 @@ body {
   text-align: center;
 }
 
+.board-stage {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
 .board-surface-wrap {
   position: relative;
   flex: 1;
