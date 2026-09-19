@@ -3,6 +3,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { applyBoardTurn } from "@/board/model";
 import {
+  readPersistedBoards,
+  writePersistedBoards,
+  type PersistedBoards,
+} from "@/board/boardStorage";
+import {
   applyElementToSlot,
   clearTutorMarks,
   ensureBoardSlots,
@@ -67,12 +72,21 @@ export function useMultiBoardSession({
   onIdle,
   idleMs = 5000,
 }: UseMultiBoardSessionOptions = {}) {
-  const [questions, setQuestions] = useState<{ id: string; label: string }[]>(
-    [],
+  // Restore the board across same-tab navigation (e.g. Inspector and back).
+  // Student ink never reaches the backend, so only local persistence can keep it.
+  const persisted = useMemo<PersistedBoards | null>(
+    () =>
+      typeof window === "undefined" || !sessionUuid
+        ? null
+        : readPersistedBoards(window.sessionStorage, sessionUuid),
+    [sessionUuid],
   );
-  const [boards, setBoards] = useState<BoardSlotMap>({});
+  const [questions, setQuestions] = useState<{ id: string; label: string }[]>(
+    () => persisted?.questions ?? [],
+  );
+  const [boards, setBoards] = useState<BoardSlotMap>(() => persisted?.boards ?? {});
   const [activeQuestionId, setActiveQuestionIdState] =
-    useState<string | null>(null);
+    useState<string | null>(() => persisted?.activeQuestionId ?? null);
   const [tool, setTool] = useState<BoardTool>("pen");
   const [penColor, setPenColor] = useState(colorForAuthor("student"));
   const [penWeight, setPenWeight] = useState(DEFAULT_PEN_WEIGHT);
@@ -120,6 +134,16 @@ export function useMultiBoardSession({
     elementsRef.current = elements;
     activeQuestionIdRef.current = activeQuestionId;
   }, [elements, activeQuestionId]);
+
+  // Mirror the board so it survives a same-tab navigation away and back.
+  useEffect(() => {
+    if (typeof window === "undefined" || !sessionUuid) return;
+    writePersistedBoards(window.sessionStorage, sessionUuid, {
+      questions,
+      boards,
+      activeQuestionId,
+    });
+  }, [sessionUuid, questions, boards, activeQuestionId]);
 
   /**
    * Idle watch: after the student stops editing the active board, hand the
