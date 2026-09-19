@@ -242,6 +242,11 @@ the snapshot was taken. (Spec story #12.)
 - `LLMAdapter` is **always injected as a fake** at the seam (`FakeAdapter`
   used by default; `getAdapter()` is the only entry point a vendor would
   plug into). No test calls a network or a vendor key.
+- The one exception is the opt-in live suite
+  (`src/lib/agent/opencode-adapter.live.test.ts`, `npm run test:live`), which
+  hits OpenCode Go for all five adapter roles. It is skipped unless
+  `CIRCLR_LLM_TEST_LIVE=1` and `OPENCODE_API` are set, so the default
+  `npm run test` and CI stay offline; the key is read from `.env` locally.
 - The OpenAPI invariant from #10 asserts the four endpoints and the
   no-`answer`/`final` field on `TutorTurn` so the wire shape can't
   regress. The smoke scripts (`next start` + curl) replay the canonical
