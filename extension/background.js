@@ -1,23 +1,63 @@
 // Background service worker.
 //
-// This is the hub of the panel ⇄ background ⇄ content-script message flow:
+// Hub of the panel ⇄ background flow, and sole owner of the capture loop:
 //   1. Toolbar click → side panel opens (openPanelOnActionClick).
-//   2. The panel sends {kind:"ignite"}; we POST /session and reply with the uuid +
-//      the Companion URL ({backend}/?s=<uuid>) that the panel loads in an iframe.
-//   3. The panel sends {kind:"capture"}; we snapshot the Document tab
-//      (captureVisibleTab) and ingest it into the session.
-//   4. Content scripts can also push {kind:"capture", payload} from the Document
-//      page itself, and get an ack plus a fresh background snapshot ingested.
-// The whole runtime state is the in-memory `session`, so in MV3 terms the
-// service worker restarts fresh — the session uuid loss on restart is acceptable
-// for this tracer.
+//   2. Panel {kind:"ignite"} → POST /session; reply with uuid + Companion URL.
+//   3. Panel {kind:"capture"} → the Companion is live; start the capture loop.
+//   4. Loop: every CAPTURE_INTERVAL_MS, screenshot the active tab →
+//      1280px JPEG → hash → dedupe → POST /material.
+//
+// No detection: a screenshot fires on a fixed interval regardless of scroll,
+// page changes, focus, or content. The one filter kept is dedupe: a frame whose
+// hash is within Hamming <4 of a recent one is not re-uploaded.
+//
+// MV3 lifecycle: Chrome terminates an extension service worker after ~30s idle.
+// A `setInterval` does not count as activity and is lost when the worker dies,
+// which is what makes captures stop. Two guards keep the loop running:
+//   - a cheap chrome.* call every KEEPALIVE_MS resets the 30s idle timer, and
+//   - a persistent chrome.alarms watchdog wakes the worker and restarts the loop
+//     if it was terminated anyway.
+// The session uuid is rehydrated from chrome.storage.session, so a revived
+// worker can resume without waiting for the panel.
 import { companionUrl, hydrate, ingest, igniteSession, newSessionState } from "./session.js";
+import { HAMMING_THRESHOLD, isDuplicate, RECENT_HASH_LIMIT } from "./hash.js";
+import { processCapture } from "./capture-image.js";
+export const CAPTURE_INTERVAL_MS = 2_000;
+// MV3 keepalive/watchdog (see header). 20s < the 30s idle timeout; 0.5min is
+// chrome.alarms' minimum period.
+const KEEPALIVE_MS = 20_000;
+const WATCHDOG_ALARM = "circlr-capture-watchdog";
+const WATCHDOG_PERIOD_MIN = 0.5;
+// Persisted so a revived worker knows whether the panel is still meant to be
+// capturing (the panel may have been closed while the worker was dead).
+const CAPTURING_KEY = "circlrCapturing";
 // One shared session state for this "one session at a time" trivial orchestration.
-// MV3 kills this worker after ~30s idle, so the state is rehydrated from
-// chrome.storage.session on each startup; every handler awaits `hydrated` before
-// touching `session`.
 const session = newSessionState();
 const hydrated = hydrate(session);
+let captureTimer = null;
+let keepaliveTimer = null;
+let capturing = false;
+// Serializes captures so the payloads that reach /material stay ordered.
+let captureChain = Promise.resolve();
+// Rolling dedupe window, oldest first: identical frames are not re-uploaded.
+const recentHashes = [];
+async function readCapturing() {
+    try {
+        const { [CAPTURING_KEY]: on } = await chrome.storage.session.get(CAPTURING_KEY);
+        return on === true;
+    }
+    catch {
+        return false;
+    }
+}
+async function writeCapturing(on) {
+    try {
+        await chrome.storage.session.set({ [CAPTURING_KEY]: on });
+    }
+    catch {
+        /* shutting down */
+    }
+}
 // Clicking the toolbar action toggles the side panel: Chrome does this natively
 chrome.sidePanel
     .setPanelBehavior({ openPanelOnActionClick: true })
@@ -26,78 +66,116 @@ chrome.sidePanel
 chrome.action.onClicked.addListener((tab) => {
     chrome.sidePanel.open({ windowId: tab.windowId }).catch(() => { });
 });
-// Average-hash helper: downscale the JPEG to `size`×`size`, then emit one bit per
-// row-pixel above that row's mean brightness. A tiny perceptual fingerprint used
-// by the dedupe logic landing with issue #13 (not enforced here yet).
-function downscaleHash(dataUrl, size) {
-    const img = new Image();
-    const url = dataUrl;
-    return new Promise((resolve) => {
-        img.onload = () => {
-            const canvas = new OffscreenCanvas(size, size);
-            const ctx = canvas.getContext("2d");
-            if (!ctx)
-                return resolve("");
-            ctx.drawImage(img, 0, 0, size, size);
-            const { data } = ctx.getImageData(0, 0, size, size);
-            const bits = [];
-            for (let y = 0; y < size; y++) {
-                const rowMean = Array.from({ length: size }, (_, x) => data[(y * size + x) * 4]).reduce((a, b) => a + b, 0) / size;
-                for (let x = 1; x < size; x++)
-                    bits.push(data[(y * size + x) * 4] > rowMean ? "1" : "0");
-            }
-            resolve(bits.join(""));
-        };
-        img.onerror = () => resolve("");
-        img.src = url;
-    });
+function broadcast(out) {
+    // Fire-and-forget: nobody listening (panel closed) is not an error
+    chrome.runtime.sendMessage(out).catch(() => { });
 }
-// Snapshot the visible Document tab and push it through ingest (which either
-// POSTs to /material or buffers locally until the uuid arrives). The result is
-// broadcast to the panel so its status line stays honest about buffering.
-async function takeAndIngestCapture(tabId) {
-    await hydrated; // restored uuid lets captures continue after a worker restart
-    // captureVisibleTab takes a windowId, not a tabId — resolve the tab's window.
-    let tab;
-    try {
-        tab = await chrome.tabs.get(tabId);
-    }
-    catch {
-        return; // tab went away
-    }
-    let dataUrl;
-    // 1280px-wide JPEG q≈0.7 is the spec's capture encoding; quality 70 ≈ 0.7
-    try {
-        dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "jpeg", quality: 70 });
-    }
-    catch {
-        return; // e.g. protected chrome:// pages can't be captured
-    }
-    // send to the backend site
-    const payload = {
-        // Tracer simplification: per-page scroll tracking arrives with #13
-        pageIndex: 0,
-        scrollRatio: 0,
-        timestamp: Date.now(),
-        hash: await downscaleHash(dataUrl, 4),
-        image: dataUrl
-    };
+async function emitIngest(payload) {
     const result = await ingest(session, payload);
-    const out = {
+    broadcast({
         kind: "capture-ingested",
         ok: result.ok,
         pendingCount: session.pending.length,
         backendReachable: result.backendReachable
+    });
+}
+// Screenshot the active tab and run it through the hash/ingest pipeline.
+// `captureVisibleTab` can only photograph the active tab of a window, so the
+// active tab is the only pane we can read. Protected pages just skip this tick.
+async function captureActiveTab() {
+    if (!capturing)
+        return; // a stop may have landed while this was queued
+    await hydrated; // restored uuid lets captures continue after a worker restart
+    let tab;
+    try {
+        [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    }
+    catch {
+        return;
+    }
+    if (!tab || tab.id === undefined)
+        return;
+    let raw;
+    try {
+        raw = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "jpeg", quality: 70 });
+    }
+    catch (err) {
+        console.warn("[capture] captureVisibleTab failed (protected page?)", err);
+        return; // e.g. protected chrome:// pages can't be captured
+    }
+    const { image, hash } = await processCapture(raw);
+    // Drop near-identical frames so a static page does not re-upload every tick.
+    if (isDuplicate(hash, recentHashes, HAMMING_THRESHOLD)) {
+        console.log("[capture] duplicate frame; skipping upload");
+        return;
+    }
+    recentHashes.push(hash);
+    if (recentHashes.length > RECENT_HASH_LIMIT)
+        recentHashes.shift();
+    const payload = {
+        pageIndex: 0,
+        scrollRatio: 0,
+        timestamp: Date.now(),
+        hash,
+        image
     };
-    // Fire-and-forget: nobody listening (panel closed) is not an error
-    chrome.runtime.sendMessage(out).catch(() => { });
+    await emitIngest(payload);
+}
+function scheduleCapture() {
+    captureChain = captureChain
+        .then(captureActiveTab)
+        .catch((err) => console.error("[capture] failed", err));
+}
+// Calling any chrome.* API resets the worker's 30s idle timer. This no-op call
+// is the cheapest reliable keepalive while the capture loop is live.
+function startKeepalive() {
+    if (keepaliveTimer !== null)
+        return;
+    keepaliveTimer = setInterval(() => {
+        chrome.runtime.getPlatformInfo(() => { });
+    }, KEEPALIVE_MS);
+}
+function startCapturing() {
+    capturing = true;
+    void writeCapturing(true);
+    startKeepalive();
+    chrome.alarms.create(WATCHDOG_ALARM, { periodInMinutes: WATCHDOG_PERIOD_MIN });
+    if (captureTimer !== null)
+        return;
+    scheduleCapture(); // immediate first frame, then every interval
+    captureTimer = setInterval(scheduleCapture, CAPTURE_INTERVAL_MS);
+}
+// The panel closed (or the extension was otherwise taken down): stop the clock,
+// the keepalive, and the watchdog so nothing wakes this worker until the panel
+// is opened again.
+function stopCapturing() {
+    capturing = false;
+    void writeCapturing(false);
+    if (captureTimer !== null) {
+        clearInterval(captureTimer);
+        captureTimer = null;
+    }
+    if (keepaliveTimer !== null) {
+        clearInterval(keepaliveTimer);
+        keepaliveTimer = null;
+    }
+    void chrome.alarms.clear(WATCHDOG_ALARM);
+}
+// Resume the loop only for a Session that already exists AND was still meant to
+// be capturing when the worker went away. Closing the panel clears the flag, so
+// the watchdog cannot resurrect a closed Session.
+function resumeIfLive() {
+    void (async () => {
+        await hydrated;
+        if (session.uuid && (await readCapturing()))
+            startCapturing();
+    })();
 }
 // Single onMessage router. Returning `true` keeps the sendResponse channel open
 // for the async reply each branch below needs.
-chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     // Panel → background: start a Session, reply with uuid + Companion embed URL.
-    // The panel mounts that URL in its iframe, completing the Split View.
-    if (msg.kind === "ignite" && "tabId" in msg) {
+    if (msg.kind === "ignite") {
         void (async () => {
             await hydrated;
             let uuid;
@@ -117,34 +195,27 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         })();
         return true; // async response
     }
-    // Panel → background: "the Companion is live" — take one end-to-end capture
-    // right away so the ingest path is exercised even before scroll/changes (#13).
-    if (msg.kind === "capture" && "tabId" in msg) {
-        void takeAndIngestCapture(msg.tabId).then(() => sendResponse({ done: true }));
+    // Panel → background: the Companion is live — start screenshotting on a timer.
+    if (msg.kind === "capture") {
+        startCapturing();
+        sendResponse({ done: true });
         return true;
     }
-    // Content script → background: a capture from the Document page itself.
-    // Ack the sender, then immediately take our authoritative background capture.
-    if (msg.kind === "capture" && "payload" in msg && sender.tab?.id !== undefined) {
-        void (async () => {
-            await hydrated;
-            await ingest(session, msg.payload);
-            sendResponse({ ok: true });
-            await takeAndIngestCapture(sender.tab.id);
-        })();
+    // Panel → background: the panel is closing — stop capturing.
+    if (msg.kind === "stop") {
+        stopCapturing();
+        sendResponse({ done: true });
         return true;
-    }
-    if (msg.kind === "capture-request") {
-        // not for background; ignore
-        return false;
     }
     return false;
 });
-// Background → content: poke the content script on every completed load so the
-// capture loop knows the Document page exists (real capture triggers land in #13).
-chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
-    if (info.status === "complete" && tab.id !== undefined) {
-        const msg = { kind: "capture-request" };
-        chrome.tabs.sendMessage(tabId, msg).catch(() => { });
-    }
+// A worker restart keeps the uuid (hydrate) but loses the timer; if a Session is
+// already live and still marked as capturing, resume without another panel message.
+resumeIfLive();
+// Persistent watchdog: it outlives the worker and Chrome wakes it to run this
+// listener, so captures resume even after a termination. The alarm is created in
+// startCapturing and cleared in stopCapturing, so it only exists while live.
+chrome.alarms.onAlarm.addListener((alarm) => {
+    if (alarm.name === WATCHDOG_ALARM)
+        resumeIfLive();
 });

@@ -39,7 +39,7 @@ _Avoid_: the program, the background process, assistant
 The student's page containing the Document with the Companion pane beside it — on desktop, the Companion in the browser side panel; on tablets, the Companion PWA placed beside the browser via the OS's own split screen. Two panes: Document left, Companion right.
 
 **Capture**:
-An event-driven snapshot of the visible Document page (scroll, page change, fallback interval, idle nudge) sent to the vision LLM.
+A periodic snapshot of the visible Document page (the active tab, `captureVisibleTab`), taken every few seconds; near-duplicates are dropped by average-hash distance before it is sent to the vision LLM.
 
 **Mode Picker**:
 The fixed two-button choice (Assignment / Review) shown when a Session starts, which sets the mode.
@@ -51,5 +51,5 @@ The generated PDF produced at the end of an Assignment Mode session — one ques
 One Document opened in the Split View, in exactly one mode, from opening to export or close.
 
 **Board**:
-The single shared canvas for a whole Session: a freehand whiteboard (pen strokes, eraser, text) that the student and the Tutor both mark. The Tutor's marks are suggested annotations (arrows, circles) and remain visually distinguished from the student's. The Board never contains a final answer written by the Tutor.
+One freehand canvas per extracted question in a Session, soft-titled by the question's vision `label` (e.g. `1a`, `2`). The student works exclusively on the active board (pen strokes, eraser, text); Tutor marks (later) remain visually distinguished from the student's. The Board never contains a final answer written by the Tutor.
 _Avoid_: canvas, jamboard, whiteboard app
