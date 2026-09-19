@@ -236,6 +236,9 @@ components:
           type: string
         draft:
           type: string
+        image:
+          type: string
+          description: Optional base64-encoded JPEG (FFD8FF prefix) snapshot of the student's work for this turn
     RequestCheckTurn:
       type: object
       required: [kind, questionId]
@@ -245,6 +248,9 @@ components:
           enum: [requestCheck]
         questionId:
           type: string
+        image:
+          type: string
+          description: Optional base64-encoded JPEG (FFD8FF prefix) snapshot of the student's work for this turn
     AssessTurn:
       type: object
       required: [kind, questionId]
@@ -255,6 +261,9 @@ components:
         questionId:
           type: string
           description: Frontend-triggered Scout assessment; the Tutor speaks only if the verdict escalates
+        image:
+          type: string
+          description: Optional base64-encoded JPEG (FFD8FF prefix) snapshot of the student's work for this turn
     AskTurn:
       type: object
       required: [kind, questionId, message]
@@ -266,6 +275,9 @@ components:
           type: string
         message:
           type: string
+        image:
+          type: string
+          description: Optional base64-encoded JPEG (FFD8FF prefix) snapshot of the student's work for this turn
     IdkTurn:
       type: object
       required: [kind, questionId]
@@ -276,6 +288,9 @@ components:
         questionId:
           type: string
           description: Student-initiated escape hatch — smallest unblock on this question
+        image:
+          type: string
+          description: Optional base64-encoded JPEG (FFD8FF prefix) snapshot of the student's work for this turn
     BoardAuthor:
       type: string
       enum: [student, tutor]

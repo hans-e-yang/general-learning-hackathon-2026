@@ -295,6 +295,99 @@ describe("agent/loop context memory", () => {
   });
 });
 
+describe("agent/loop image turns", () => {
+  const IMG = "data:image/jpeg;base64,/9j/AAAA";
+
+  it("threads the turn image into scout and records it on the draft entry", async () => {
+    const seen: Array<string | undefined> = [];
+    const { publisher } = capture();
+    configureAgentLoop({
+      adapter: stubAdapter({
+        scout: async (input) => {
+          seen.push(input.image);
+          return { status: "on-track", reasoning: "ok", escalate: true };
+        },
+      }),
+      publishEvent: publisher,
+    });
+    seedSession("u1", {
+      worksheet: [{ id: "q1", index: 0, text: "x", status: "blocked" }],
+    });
+
+    await processTurn("u1", { kind: "saveDraft", questionId: "q1", draft: "attempt", image: IMG });
+
+    expect(seen).toEqual([IMG]);
+    const draft = get("u1")!.context.find((c) => c.kind === "draft");
+    expect(draft?.image).toBe(IMG);
+  });
+
+  it("threads the turn image into tutor and records it on the tutor material", async () => {
+    const seen: Array<string | undefined> = [];
+    const { publisher } = capture();
+    configureAgentLoop({
+      adapter: stubAdapter({
+        tutor: async (input) => {
+          seen.push(input.image);
+          return { questionId: input.questionId, hint: "hint", level: 0, escalation: "same" };
+        },
+      }),
+      publishEvent: publisher,
+    });
+    seedSession("u1", {
+      worksheet: [{ id: "q1", index: 0, text: "x", status: "blocked" }],
+    });
+
+    await processTurn("u1", { kind: "requestCheck", questionId: "q1", image: IMG });
+
+    expect(seen[0]).toBe(IMG);
+    const tutor = get("u1")!.context.find((c) => c.kind === "tutor");
+    if (tutor?.kind !== "tutor") throw new Error("expected tutor entry");
+    expect(tutor.material.image).toBe(IMG);
+  });
+
+  it("threads the turn image into idk", async () => {
+    let seen: string | undefined;
+    const { publisher } = capture();
+    configureAgentLoop({
+      adapter: stubAdapter({
+        idk: async (input) => {
+          seen = input.image;
+          return { questionId: input.questionId, hint: "hint", level: 0, escalation: "same" };
+        },
+      }),
+      publishEvent: publisher,
+    });
+    seedSession("u1", {
+      worksheet: [{ id: "q1", index: 0, text: "x", status: "blocked" }],
+    });
+
+    await processTurn("u1", { kind: "idk", questionId: "q1", image: IMG });
+
+    expect(seen).toBe(IMG);
+  });
+
+  it("does not attach an image when the turn omits it", async () => {
+    const seen: Array<string | undefined> = [];
+    const { publisher } = capture();
+    configureAgentLoop({
+      adapter: stubAdapter({
+        scout: async (input) => {
+          seen.push(input.image);
+          return { status: "on-track", reasoning: "ok", escalate: true };
+        },
+      }),
+      publishEvent: publisher,
+    });
+    seedSession("u1", {
+      worksheet: [{ id: "q1", index: 0, text: "x", status: "blocked" }],
+    });
+
+    await processTurn("u1", { kind: "saveDraft", questionId: "q1", draft: "attempt" });
+
+    expect(seen).toEqual([undefined]);
+  });
+});
+
 describe("agent/loop canvas", () => {
   it("applies a student board-pen turn and publishes board.element", async () => {
     const { events, publisher } = capture();

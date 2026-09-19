@@ -339,6 +339,39 @@ describe("/session/:uuid/turn POST", () => {
     expect(snap.board).toHaveLength(1);
     expect(snap.board[0].id).toBe("t1");
   });
+
+  it("accepts an image on a conversational turn", async () => {
+    const s = (await (
+      await startSession(req("http://test.local/session", { method: "POST" }))
+    ).json()) as { uuid: string };
+    getOrCreate(s.uuid);
+    const res = await postTurn(
+      req(`http://test.local/session/${s.uuid}/turn`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ kind: "idk", questionId: "q1", image: JPEG_B64 }),
+      }),
+      { params: Promise.resolve({ uuid: s.uuid }) }
+    );
+    expect(res.status).toBe(202);
+  });
+
+  it("rejects a non-JPEG image on a conversational turn", async () => {
+    const s = (await (
+      await startSession(req("http://test.local/session", { method: "POST" }))
+    ).json()) as { uuid: string };
+    getOrCreate(s.uuid);
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).toString("base64");
+    const res = await postTurn(
+      req(`http://test.local/session/${s.uuid}/turn`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ kind: "idk", questionId: "q1", image: png }),
+      }),
+      { params: Promise.resolve({ uuid: s.uuid }) }
+    );
+    expect(res.status).toBe(400);
+  });
 });
 
 describe("/session/:uuid/turn idk (#23)", () => {

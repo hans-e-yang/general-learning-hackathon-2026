@@ -57,6 +57,8 @@ export interface DraftContextEntry extends ContextEntryBase {
   questionId: string;
   draft: string;
   questionText?: string;
+  /** Student-work snapshot attached to this turn, if any. */
+  image?: string;
   assessment?: { status: AssessmentStatus; reasoning: string };
 }
 

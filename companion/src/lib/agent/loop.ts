@@ -388,7 +388,11 @@ export async function watchOnCapture(
   return verdict;
 }
 
-export async function assessDraft(uuid: string, questionId: string, captureHint?: { captureHash: string; pageIndex: number }): Promise<void> {
+export async function assessDraft(
+  uuid: string,
+  questionId: string,
+  captureHint?: { captureHash?: string; pageIndex?: number; image?: string }
+): Promise<void> {
   await withLock(uuid, async () => {
     const state = get(uuid);
     if (!state) return;
@@ -399,11 +403,13 @@ export async function assessDraft(uuid: string, questionId: string, captureHint?
     const last = state.captures.length > 0 ? state.captures[state.captures.length - 1] : undefined;
     const captureHash = captureHint?.captureHash ?? last?.hash ?? "no-capture";
     const pageIndex = captureHint?.pageIndex ?? last?.pageIndex ?? 0;
+    const image = captureHint?.image;
     const input: ScoutInput = {
       captureHash,
       pageIndex,
       questionText: q?.text,
       draftText: draft,
+      image,
     };
     const verdict = await adapter.scout(input);
     recordContext(state, {
@@ -411,6 +417,7 @@ export async function assessDraft(uuid: string, questionId: string, captureHint?
       questionId,
       draft,
       questionText: q?.text,
+      image,
       assessment: { status: verdict.status, reasoning: verdict.reasoning },
     });
     publishEvent(uuid, {
@@ -424,7 +431,10 @@ export async function assessDraft(uuid: string, questionId: string, captureHint?
   });
 }
 
-export async function assessAllDrafts(uuid: string, captureHint?: { captureHash: string; pageIndex: number }): Promise<void> {
+export async function assessAllDrafts(
+  uuid: string,
+  captureHint?: { captureHash: string; pageIndex: number; image?: string }
+): Promise<void> {
   const state = get(uuid);
   if (!state) return;
   const qids = Object.keys(state.drafts);
@@ -451,7 +461,7 @@ export async function processTurn(uuid: string, turn: TurnRequest): Promise<void
       if (!state) return;
       state.drafts[turn.questionId] = turn.draft;
     });
-    await assessDraft(uuid, turn.questionId);
+    await assessDraft(uuid, turn.questionId, turn.image ? { image: turn.image } : undefined);
     return;
   }
 
@@ -481,6 +491,7 @@ export async function processTurn(uuid: string, turn: TurnRequest): Promise<void
             state.captures.length > 0
               ? state.captures[state.captures.length - 1].hash
               : undefined,
+          image: turn.image,
           onPrompt: (messages) => {
             prompt = messages;
           },
@@ -491,7 +502,7 @@ export async function processTurn(uuid: string, turn: TurnRequest): Promise<void
           questionId: turn.questionId,
           prompt,
           input: { kind: "turn", turn },
-          material: buildMaterial(state, { questionId: turn.questionId }),
+          material: buildMaterial(state, { questionId: turn.questionId, image: turn.image }),
           output: tutorTurn,
         });
         thread.push(tutorTurn);
@@ -514,12 +525,14 @@ export async function processTurn(uuid: string, turn: TurnRequest): Promise<void
               : 0,
           questionText: q?.text,
           draftText: draft,
+          image: turn.image,
         });
         recordContext(state, {
           kind: "draft",
           questionId: turn.questionId,
           draft,
           questionText: q?.text,
+          image: turn.image,
           assessment: { status: verdict.status, reasoning: verdict.reasoning },
         });
         publishEvent(uuid, {
@@ -544,12 +557,14 @@ export async function processTurn(uuid: string, turn: TurnRequest): Promise<void
           pageIndex: lastCapture?.pageIndex ?? 0,
           questionText: q?.text,
           draftText: draft,
+          image: turn.image,
         });
         recordContext(state, {
           kind: "draft",
           questionId: turn.questionId,
           draft,
           questionText: q?.text,
+          image: turn.image,
           assessment: { status: verdict.status, reasoning: verdict.reasoning },
         });
         publishEvent(uuid, {
@@ -570,6 +585,7 @@ export async function processTurn(uuid: string, turn: TurnRequest): Promise<void
           threadHistory: thread,
           currentLevel: nextLevel(thread, 0),
           captureHash: lastCapture?.hash,
+          image: turn.image,
           onPrompt: (messages) => {
             prompt = messages;
           },
@@ -583,6 +599,7 @@ export async function processTurn(uuid: string, turn: TurnRequest): Promise<void
             questionId: turn.questionId,
             captureHash: lastCapture?.hash,
             pageIndex: lastCapture?.pageIndex,
+            image: turn.image,
           }),
           output: tutorTurn,
         });
@@ -615,6 +632,7 @@ export async function processTurn(uuid: string, turn: TurnRequest): Promise<void
             state.captures.length > 0
               ? state.captures[state.captures.length - 1].hash
               : undefined,
+          image: turn.image,
           onPrompt: (messages) => {
             prompt = messages;
           },
@@ -625,7 +643,7 @@ export async function processTurn(uuid: string, turn: TurnRequest): Promise<void
           questionId: turn.questionId,
           prompt,
           input: { kind: "turn", turn },
-          material: buildMaterial(state, { questionId: turn.questionId }),
+          material: buildMaterial(state, { questionId: turn.questionId, image: turn.image }),
           output: tutorTurn,
         });
         thread.push(tutorTurn);
@@ -650,6 +668,7 @@ export async function processTurn(uuid: string, turn: TurnRequest): Promise<void
           questionId: turn.questionId,
           questionText: q?.text ?? "(question text unavailable)",
           draftText: state.drafts[turn.questionId],
+          image: turn.image,
           onPrompt: (messages) => {
             prompt = messages;
           },
@@ -660,7 +679,7 @@ export async function processTurn(uuid: string, turn: TurnRequest): Promise<void
           questionId: turn.questionId,
           prompt,
           input: { kind: "turn", turn },
-          material: buildMaterial(state, { questionId: turn.questionId }),
+          material: buildMaterial(state, { questionId: turn.questionId, image: turn.image }),
           output: tutorTurn,
         });
         thread.push(tutorTurn);

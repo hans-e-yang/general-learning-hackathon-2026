@@ -214,6 +214,61 @@ describe("opencode-adapter/tutor", () => {
   });
 });
 
+describe("opencode-adapter/turn images", () => {
+  const IMG = "Zm9vYmFy";
+
+  it("uses the vision model and attaches the image to the tutor request", async () => {
+    fetchMock.mockResolvedValueOnce(
+      completion({ hint: "Look at step 2.", level: 1, escalation: "same" })
+    );
+    await adapter().tutor({
+      questionId: "q1",
+      questionText: "Solve for x.",
+      threadHistory: [],
+      currentLevel: 0,
+      image: IMG,
+    });
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    expect(body.model).toBe("test-vision");
+    expect(JSON.stringify(body.messages)).toContain("data:image/jpeg;base64,Zm9vYmFy");
+  });
+
+  it("stays on the text model for tutor when no image is attached", async () => {
+    fetchMock.mockResolvedValueOnce(
+      completion({ hint: "Look at step 2.", level: 1, escalation: "same" })
+    );
+    await adapter().tutor({
+      questionId: "q1",
+      questionText: "Solve for x.",
+      threadHistory: [],
+      currentLevel: 0,
+    });
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    expect(body.model).toBe("test-text");
+  });
+
+  it("uses the vision model for scout when an image is attached", async () => {
+    fetchMock.mockResolvedValueOnce(
+      completion({ status: "on-track", reasoning: "right direction" })
+    );
+    await adapter().scout({
+      captureHash: "h",
+      pageIndex: 0,
+      draftText: "therefore x=1",
+      image: IMG,
+    });
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    expect(body.model).toBe("test-vision");
+  });
+
+  it("uses the vision model for idk when an image is attached", async () => {
+    fetchMock.mockResolvedValueOnce(completion({ hint: "What is it asking?" }));
+    await adapter().idk({ questionId: "q1", questionText: "x", image: IMG });
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    expect(body.model).toBe("test-vision");
+  });
+});
+
 describe("opencode-adapter/scout + watch + idk", () => {
   it("validates the scout status enum", async () => {
     fetchMock.mockResolvedValueOnce(completion({ status: "bogus", reasoning: "x" }));
