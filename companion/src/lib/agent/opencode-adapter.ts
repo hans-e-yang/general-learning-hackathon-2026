@@ -327,15 +327,6 @@ export class OpenCodeAdapter implements LLMAdapter {
 
   private async jsonCall<T>(messages: ChatMessage[], opts: ChatOptions, schema: z.ZodType<T>): Promise<T> {
     const raw = await this.chat(messages, opts);
-    // TEMP: raw completion capture for E2E inspection. Remove after.
-    const g = globalThis as unknown as { __circlrRaw?: unknown[] };
-    (g.__circlrRaw ??= []).push({
-      at: Date.now(),
-      model: opts.model,
-      system: messages.find((m) => m.role === "system")?.content,
-      messages,
-      raw,
-    });
     const parsed = schema.safeParse(parseJsonLoose(raw));
     if (!parsed.success) {
       throw new Error(`OpenCode Zen returned malformed output: ${parsed.error.message}`);

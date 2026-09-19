@@ -1,11 +1,12 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { applyBoardTurn } from "@/board/model";
 import {
   ensureBoardSlots,
   neighborQuestionId,
   pickActiveQuestionId,
+  removeBoardSlot,
   type BoardSlotMap,
 } from "@/board/multiBoard";
 import { renderMathText } from "@/board/mathText";
@@ -54,6 +55,8 @@ export function useMultiBoardSession({
   const [shapeKind, setShapeKind] = useState<ShapeKind>("rect");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [livePoints, setLivePoints] = useState<BoardPoint[] | null>(null);
+  /** Pages the student deleted; filtered from every later worksheet sync. */
+  const deletedIdsRef = useRef<Set<string>>(new Set());
 
   const elements =
     activeQuestionId !== null ? (boards[activeQuestionId] ?? []) : [];
@@ -82,11 +85,26 @@ export function useMultiBoardSession({
 
   const syncQuestions = useCallback(
     (qs: { id: string; label: string }[]) => {
-      setQuestions(qs.map((q) => ({ id: q.id, label: q.label })));
-      setBoards((prev) => ensureBoardSlots(prev, qs));
-      activateQuestion((prev) => pickActiveQuestionId(prev, qs));
+      const visible = qs.filter((q) => !deletedIdsRef.current.has(q.id));
+      setQuestions(visible.map((q) => ({ id: q.id, label: q.label })));
+      setBoards((prev) => ensureBoardSlots(prev, visible));
+      activateQuestion((prev) => pickActiveQuestionId(prev, visible));
     },
     [activateQuestion],
+  );
+
+  /** Delete a page (question board) from the local carousel for this session. */
+  const deleteQuestion = useCallback(
+    (id: string) => {
+      deletedIdsRef.current.add(id);
+      const nextQuestions = questions.filter((q) => q.id !== id);
+      setQuestions(nextQuestions);
+      setBoards((prev) => removeBoardSlot(prev, id));
+      activateQuestion((prev) =>
+        prev === id ? pickActiveQuestionId(null, nextQuestions) : prev,
+      );
+    },
+    [questions, activateQuestion],
   );
 
   const goPrev = useCallback(() => {
@@ -274,6 +292,7 @@ export function useMultiBoardSession({
     activeQuestionId,
     setActiveQuestionId,
     syncQuestions,
+    deleteQuestion,
     goPrev,
     goNext,
     elements,

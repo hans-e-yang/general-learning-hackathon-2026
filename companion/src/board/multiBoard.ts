@@ -27,6 +27,17 @@ export function pickActiveQuestionId(
   return questions[0]?.id ?? null;
 }
 
+/** Drop a page (its slot and ink) from the board map. Other pages are untouched. */
+export function removeBoardSlot(
+  boards: BoardSlotMap,
+  id: string,
+): BoardSlotMap {
+  if (!(id in boards)) return boards;
+  const next: BoardSlotMap = { ...boards };
+  delete next[id];
+  return next;
+}
+
 /** Adjacent question id by delta; null at ends or when active is missing. */
 export function neighborQuestionId(
   questions: { id: string }[],

@@ -333,7 +333,7 @@ body {
 
 .board-carousel-chrome {
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: auto 1fr auto auto;
   align-items: center;
   gap: 0.75rem;
   padding: 0.55rem 0.85rem 0.25rem;
@@ -372,6 +372,33 @@ body {
 }
 
 .board-slide-nav:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.board-page-delete {
+  appearance: none;
+  border: 1px solid color-mix(in srgb, #b42318 35%, var(--line));
+  border-radius: 999px;
+  background: transparent;
+  color: #8a1c12;
+  font: inherit;
+  font-size: 0.75rem;
+  letter-spacing: 0.02em;
+  padding: 0.3rem 0.7rem;
+  cursor: pointer;
+}
+
+.board-page-delete:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.board-page-delete:not(:disabled):hover {
+  background: color-mix(in srgb, #b42318 10%, var(--paper));
+}
+
+.board-page-delete:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
 }

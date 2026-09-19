@@ -3,6 +3,7 @@ import {
   ensureBoardSlots,
   neighborQuestionId,
   pickActiveQuestionId,
+  removeBoardSlot,
 } from "./multiBoard";
 
 describe("ensureBoardSlots", () => {
@@ -48,5 +49,22 @@ describe("neighborQuestionId", () => {
     expect(neighborQuestionId(qs, "a", 1)).toBe("b");
     expect(neighborQuestionId(qs, "c", 1)).toBeNull();
     expect(neighborQuestionId(qs, "b", -1)).toBe("a");
+  });
+});
+
+describe("removeBoardSlot", () => {
+  it("removes only the deleted page and keeps sibling ink", () => {
+    const prev = {
+      a: [{ id: "pen-a" } as never],
+      b: [{ id: "pen-b" } as never],
+    };
+    const next = removeBoardSlot(prev, "a");
+    expect("a" in next).toBe(false);
+    expect(next.b).toHaveLength(1);
+  });
+
+  it("is a no-op for an unknown id", () => {
+    const prev = { a: [] as never[] };
+    expect(removeBoardSlot(prev, "missing")).toBe(prev);
   });
 });

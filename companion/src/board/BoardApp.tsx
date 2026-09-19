@@ -66,6 +66,7 @@ function BoardShell({ sessionUuid }: { sessionUuid: string }) {
     activeQuestionId,
     setActiveQuestionId,
     syncQuestions,
+    deleteQuestion,
     goPrev,
     goNext,
     elements,
@@ -169,6 +170,12 @@ function BoardShell({ sessionUuid }: { sessionUuid: string }) {
         canNext={canNext}
         onPrev={goPrev}
         onNext={goNext}
+        onDelete={
+          activeQuestionId !== null
+            ? () => deleteQuestion(activeQuestionId)
+            : undefined
+        }
+        canDelete={activeQuestionId !== null}
         empty={empty}
         processing={captureProcessing}
       >

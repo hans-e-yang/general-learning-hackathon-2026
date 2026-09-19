@@ -8,6 +8,8 @@ export function BoardCarousel(props: {
   canNext: boolean;
   onPrev: () => void;
   onNext: () => void;
+  onDelete?: () => void;
+  canDelete?: boolean;
   empty: boolean;
   processing?: boolean;
   children: ReactNode;
@@ -47,6 +49,16 @@ export function BoardCarousel(props: {
           aria-label="Next question"
         >
           ›
+        </button>
+        <button
+          type="button"
+          className="board-page-delete"
+          disabled={props.canDelete === false || !props.onDelete}
+          onClick={props.onDelete}
+          aria-label="Delete this page"
+          title="Delete this page"
+        >
+          Delete
         </button>
       </div>
       {props.children}
