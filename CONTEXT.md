@@ -36,7 +36,7 @@ The Socratic AI assistant. It guides with hints and probing questions and never 
 _Avoid_: the program, the background process, assistant
 
 **Split View**:
-A single browser tab showing two panes side by side: the student's page containing the Document on the left, the right pane (Worksheet or Notes) on the right.
+The student's page containing the Document with the Companion pane beside it — on desktop, the Companion in the browser side panel; on tablets, the Companion PWA placed beside the browser via the OS's own split screen. Two panes: Document left, Companion right.
 
 **Capture**:
 An event-driven snapshot of the visible Document page (scroll, page change, fallback interval, idle nudge) sent to the vision LLM.
@@ -49,3 +49,7 @@ The generated PDF produced at the end of an Assignment Mode session — one ques
 
 **Session**:
 One Document opened in the Split View, in exactly one mode, from opening to export or close.
+
+**Board**:
+The single shared canvas for a whole Session: a freehand whiteboard (pen strokes, eraser, text) that the student and the Tutor both mark. The Tutor's marks are suggested annotations (arrows, circles) and remain visually distinguished from the student's. The Board never contains a final answer written by the Tutor.
+_Avoid_: canvas, jamboard, whiteboard app
