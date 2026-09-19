@@ -5,10 +5,11 @@
 // returned a uuid, so captures are buffered locally (bounded) and flushed once
 // the uuid exists. A capture arriving with no uuid also triggers ignition.
 //
-// Durability: MV3 terminates the background worker after ~30s idle, which would
-// lose the uuid and the buffer. State is therefore mirrored to
-// chrome.storage.session (survives worker restarts, cleared on browser exit) and
-// rehydrated by the background at startup.
+// Lifetime: a Session lives only while the side panel is open. While it is open
+// the uuid + buffer are mirrored to chrome.storage.session so an MV3 worker
+// restart (~30s idle) can resume without losing the Session; when the panel
+// closes, endSession() clears that mirror so the next open mints a new Session
+// instead of resurrecting the old Document's Worksheet.
 
 import type { CapturePayload, IngestResult } from "./messages.js";
 import { getBackendUrl } from "./config.js";
@@ -37,6 +38,25 @@ async function save(state: SessionState): Promise<void> {
     await chrome.storage.session.set({
       [STORAGE_KEY]: { uuid: state.uuid, pending: state.pending.slice(-PERSIST_LIMIT) }
     });
+  } catch {
+    /* shutting down */
+  }
+}
+
+// The panel closed: drop the Session's uuid and any buffered captures and clear
+// the mirrored state, so the next ignition starts a brand-new Session. State is
+// reset synchronously (the storage removal is best-effort) so a reopen cannot
+// race the clear.
+export function endSession(state: SessionState): void {
+  state.uuid = null;
+  state.pending = [];
+  void clearPersisted();
+}
+
+async function clearPersisted(): Promise<void> {
+  if (!chrome.storage.session) return; // Chrome < 102
+  try {
+    await chrome.storage.session.remove(STORAGE_KEY);
   } catch {
     /* shutting down */
   }

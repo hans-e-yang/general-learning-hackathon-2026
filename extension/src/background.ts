@@ -30,6 +30,7 @@ import type {
 } from "./messages.js";
 import {
   companionUrl,
+  endSession,
   healthCheck,
   hydrate,
   ingest,
@@ -244,9 +245,11 @@ chrome.runtime.onMessage.addListener((msg: PanelToBackground, _sender, sendRespo
     sendResponse({ done: true });
     return true;
   }
-  // Panel → background: the panel is closing — stop capturing.
+  // Panel → background: the panel is closing — stop capturing and end the
+  // Session so reopening does not resurrect the old Document's Worksheet.
   if (msg.kind === "stop") {
     stopCapturing();
+    endSession(session);
     sendResponse({ done: true });
     return true;
   }

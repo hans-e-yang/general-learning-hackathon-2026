@@ -21,7 +21,7 @@
 //     if it was terminated anyway.
 // The session uuid is rehydrated from chrome.storage.session, so a revived
 // worker can resume without waiting for the panel.
-import { companionUrl, healthCheck, hydrate, ingest, igniteSession, newSessionState } from "./session.js";
+import { companionUrl, endSession, healthCheck, hydrate, ingest, igniteSession, newSessionState } from "./session.js";
 import { HAMMING_THRESHOLD, isDuplicate, RECENT_HASH_LIMIT } from "./hash.js";
 import { processCapture } from "./capture-image.js";
 export const CAPTURE_INTERVAL_MS = 2_000;
@@ -222,9 +222,11 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         sendResponse({ done: true });
         return true;
     }
-    // Panel → background: the panel is closing — stop capturing.
+    // Panel → background: the panel is closing — stop capturing and end the
+    // Session so reopening does not resurrect the old Document's Worksheet.
     if (msg.kind === "stop") {
         stopCapturing();
+        endSession(session);
         sendResponse({ done: true });
         return true;
     }
