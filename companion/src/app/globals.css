@@ -90,6 +90,7 @@ body {
 
 .board-tools {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.25rem;
   padding: 0.15rem;
   background: color-mix(in srgb, white 70%, var(--toolbar));
@@ -103,9 +104,9 @@ body {
   background: transparent;
   color: var(--ink-muted);
   font: inherit;
-  font-size: 0.85rem;
+  font-size: 0.78rem;
   font-weight: 500;
-  padding: 0.35rem 0.7rem;
+  padding: 0.3rem 0.55rem;
   border-radius: 0.3rem;
   cursor: pointer;
 }
@@ -118,6 +119,81 @@ body {
 .board-tool:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
+}
+
+.board-options,
+.board-eraser-sizes,
+.board-shape-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.5rem;
+}
+
+.board-color-row,
+.board-weight-row {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.board-color-swatch {
+  appearance: none;
+  width: 1rem;
+  height: 1rem;
+  border-radius: 999px;
+  border: 2px solid transparent;
+  cursor: pointer;
+  padding: 0;
+}
+
+.board-color-swatch.is-active {
+  border-color: var(--focus);
+  outline: 1px solid #fffdf8;
+}
+
+.board-weight {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  width: 1.4rem;
+  height: 1.4rem;
+  border-radius: 0.3rem;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+.board-weight.is-active {
+  background: color-mix(in srgb, var(--ink) 10%, transparent);
+}
+
+.board-weight-dot {
+  display: block;
+  border-radius: 999px;
+}
+
+.board-eraser-size {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 0.3rem;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+.board-eraser-size.is-active {
+  background: color-mix(in srgb, var(--ink) 10%, transparent);
+}
+
+.board-eraser-size-dot {
+  display: block;
+  border-radius: 999px;
+  border: 1.5px solid var(--ink-muted);
+  background: color-mix(in srgb, var(--ink-muted) 12%, transparent);
 }
 
 .board-legend {
@@ -181,6 +257,17 @@ body {
   cursor: text;
 }
 
+.board-surface.is-eraser-tool {
+  cursor: none;
+}
+
+.board-eraser-tip {
+  fill: color-mix(in srgb, var(--ink-muted) 12%, transparent);
+  stroke: color-mix(in srgb, var(--ink-muted) 45%, transparent);
+  stroke-width: 1.5;
+  pointer-events: none;
+}
+
 .board-grid-overlay {
   position: absolute;
   inset: 0;
@@ -229,12 +316,26 @@ body {
   border-bottom: 1px dashed color-mix(in srgb, var(--tutor) 40%, transparent);
 }
 
+.board-surface.is-select-tool {
+  cursor: default;
+}
+
+.board-surface path.is-selected,
+.board-surface g.is-selected > * {
+  filter: drop-shadow(0 0 2px color-mix(in srgb, var(--focus) 70%, transparent));
+}
+
+.board-text-chip.is-selected {
+  border-color: var(--focus);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--focus) 45%, transparent);
+}
+
 .board-text-chip {
   position: absolute;
   display: flex;
   align-items: flex-start;
   gap: 0.2rem;
-  max-width: min(18rem, 70%);
+  max-width: min(26rem, 80%);
   padding: 0.15rem 0.2rem 0.15rem 0.15rem;
   transform: translate(0, -0.35em);
   pointer-events: auto;
@@ -245,6 +346,32 @@ body {
   border: 1px solid color-mix(in srgb, var(--paper-line) 80%, transparent);
   border-radius: 0.3rem;
   box-shadow: 0 1px 4px color-mix(in srgb, var(--ink) 8%, transparent);
+}
+
+.board-text-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.board-text-resize {
+  appearance: none;
+  flex: 0 0 auto;
+  align-self: flex-end;
+  width: 0.7rem;
+  height: 0.7rem;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-right: 2px solid var(--ink-muted);
+  border-bottom: 2px solid var(--ink-muted);
+  background: transparent;
+  cursor: nwse-resize;
+  opacity: 0.7;
+}
+
+.board-text-resize:hover {
+  opacity: 1;
+  border-color: var(--focus);
 }
 
 .board-text-chip.is-dragging {

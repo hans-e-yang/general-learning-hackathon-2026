@@ -18,11 +18,16 @@ export function KatexText({ element }: KatexTextProps) {
     element.degraded === true ||
     (rendered.kind === "plain" && rendered.degraded === true);
 
+  const style = {
+    color: element.color,
+    fontSize: `${element.fontSize}px`,
+  };
+
   if (rendered.kind === "html" && !degraded) {
     return (
       <span
         className="board-katex"
-        style={{ color: element.color }}
+        style={style}
         data-author={element.author}
         dangerouslySetInnerHTML={{ __html: rendered.html }}
       />
@@ -32,7 +37,7 @@ export function KatexText({ element }: KatexTextProps) {
   return (
     <span
       className={degraded ? "board-text is-degraded" : "board-text"}
-      style={{ color: element.color }}
+      style={style}
       data-author={element.author}
       data-degraded={degraded ? "true" : undefined}
     >

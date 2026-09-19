@@ -79,7 +79,13 @@ function createLiveChannel(
       const handle = (msg: MessageEvent<string>) => {
         try {
           const data = JSON.parse(msg.data) as BoardSseEvent;
-          if (data?.type === "board.element" || data?.type === "board.remove" || data?.type === "board.text-move") {
+          if (
+            data?.type === "board.element" ||
+            data?.type === "board.remove" ||
+            data?.type === "board.text-move" ||
+            data?.type === "board.pen-move" ||
+            data?.type === "board.shape-move"
+          ) {
             onEvent(data);
           }
         } catch {
@@ -90,10 +96,14 @@ function createLiveChannel(
       source.addEventListener("board.element", handle as EventListener);
       source.addEventListener("board.remove", handle as EventListener);
       source.addEventListener("board.text-move", handle as EventListener);
+      source.addEventListener("board.pen-move", handle as EventListener);
+      source.addEventListener("board.shape-move", handle as EventListener);
       return () => {
         source.removeEventListener("board.element", handle as EventListener);
         source.removeEventListener("board.remove", handle as EventListener);
         source.removeEventListener("board.text-move", handle as EventListener);
+        source.removeEventListener("board.pen-move", handle as EventListener);
+        source.removeEventListener("board.shape-move", handle as EventListener);
         source.close();
       };
     },

@@ -12,9 +12,17 @@ import type {
   BoardPoint,
   BoardTool,
   BoardTurn,
+  ShapeElement,
+  ShapeKind,
   TextElement,
 } from "@/contracts/board";
-import { colorForAuthor } from "@/contracts/board";
+import {
+  DEFAULT_ERASER_SIZE,
+  DEFAULT_PEN_WEIGHT,
+  DEFAULT_TEXT_FONT_SIZE,
+  DEFAULT_TEXT_WIDTH,
+  colorForAuthor,
+} from "@/contracts/board";
 import {
   createBoardChannel,
   type BoardChannel,
@@ -38,6 +46,11 @@ export function useBoardSession({
 }: UseBoardSessionOptions) {
   const [elements, setElements] = useState<BoardElement[]>([]);
   const [tool, setTool] = useState<BoardTool>("pen");
+  const [penColor, setPenColor] = useState(colorForAuthor("student"));
+  const [penWeight, setPenWeight] = useState(DEFAULT_PEN_WEIGHT);
+  const [eraserSize, setEraserSize] = useState(DEFAULT_ERASER_SIZE);
+  const [shapeKind, setShapeKind] = useState<ShapeKind>("rect");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [livePoints, setLivePoints] = useState<BoardPoint[] | null>(null);
 
   const channel = useMemo<BoardChannel>(
@@ -51,6 +64,7 @@ export function useBoardSession({
         setElements((prev) => applyBoardElement(prev, event.element));
       } else if (event.type === "board.remove") {
         setElements((prev) => removeBoardElement(prev, event.elementId));
+        setSelectedId((id) => (id === event.elementId ? null : id));
       } else if (event.type === "board.text-move") {
         setElements((prev) =>
           applyBoardTurn(prev, {
@@ -58,6 +72,28 @@ export function useBoardSession({
             elementId: event.elementId,
             x: event.x,
             y: event.y,
+            width: event.width,
+            fontSize: event.fontSize,
+          }),
+        );
+      } else if (event.type === "board.pen-move") {
+        setElements((prev) =>
+          applyBoardTurn(prev, {
+            kind: "board-pen-move",
+            elementId: event.elementId,
+            dx: event.dx,
+            dy: event.dy,
+          }),
+        );
+      } else if (event.type === "board.shape-move") {
+        setElements((prev) =>
+          applyBoardTurn(prev, {
+            kind: "board-shape-move",
+            elementId: event.elementId,
+            x: event.x,
+            y: event.y,
+            width: event.width,
+            height: event.height,
           }),
         );
       }
@@ -79,29 +115,73 @@ export function useBoardSession({
   );
 
   const commitStroke = useCallback(
-    async (points: BoardPoint[], strokeTool: "pen" | "eraserMask") => {
+    async (points: BoardPoint[]) => {
       if (points.length < 2) return;
-      const id = newId(strokeTool === "pen" ? "pen" : "erase");
-      if (strokeTool === "pen") {
-        const element: BoardElement = {
-          id,
-          tool: "pen",
-          author: "student",
-          points,
-          color: colorForAuthor("student"),
-        };
-        await commitTurn({ kind: "board-pen", element }, element);
-      } else {
-        const element: BoardElement = {
-          id,
-          tool: "eraserMask",
-          author: "student",
-          points,
-        };
-        await commitTurn({ kind: "board-eraser", element }, element);
+      const element: BoardElement = {
+        id: newId("pen"),
+        tool: "pen",
+        author: "student",
+        points,
+        color: penColor,
+        strokeWidth: penWeight,
+      };
+      await commitTurn({ kind: "board-pen", element }, element);
+    },
+    [commitTurn, penColor, penWeight],
+  );
+
+  const commitShape = useCallback(
+    async (draft: {
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      shape: ShapeKind;
+    }) => {
+      if (Math.abs(draft.width) < 4 && Math.abs(draft.height) < 4) return;
+      const element: ShapeElement = {
+        id: newId("shape"),
+        tool: "shape",
+        shape: draft.shape,
+        author: "student",
+        x: draft.x,
+        y: draft.y,
+        width: draft.width,
+        height: draft.height,
+        color: penColor,
+        strokeWidth: penWeight,
+      };
+      await commitTurn({ kind: "board-shape", element }, element);
+    },
+    [commitTurn, penColor, penWeight],
+  );
+
+  const eraseStrokes = useCallback(
+    async (elementIds: string[]) => {
+      const unique = [...new Set(elementIds)];
+      if (unique.length === 0) return;
+      let removed: BoardElement[] = [];
+      setElements((prev) => {
+        removed = prev.filter((el) => unique.includes(el.id));
+        return applyBoardTurn(prev, {
+          kind: "board-eraser",
+          elementIds: unique,
+        });
+      });
+      setSelectedId((id) => (id && unique.includes(id) ? null : id));
+      try {
+        await channel.postTurn({
+          kind: "board-eraser",
+          elementIds: unique,
+        });
+      } catch (err) {
+        console.error("Board erase failed", err);
+        for (const el of removed) {
+          setElements((prev) => applyBoardElement(prev, el));
+        }
       }
     },
-    [commitTurn],
+    [channel],
   );
 
   const commitText = useCallback(
@@ -117,12 +197,14 @@ export function useBoardSession({
         x,
         y,
         source: trimmed,
-        color: colorForAuthor("student"),
+        color: penColor,
+        width: DEFAULT_TEXT_WIDTH,
+        fontSize: DEFAULT_TEXT_FONT_SIZE,
         ...(degraded ? { degraded: true } : {}),
       };
       await commitTurn({ kind: "board-text", element }, element);
     },
-    [commitTurn],
+    [commitTurn, penColor],
   );
 
   const removeElement = useCallback(
@@ -132,6 +214,7 @@ export function useBoardSession({
         removed = prev.find((el) => el.id === elementId);
         return applyBoardTurn(prev, { kind: "board-remove", elementId });
       });
+      setSelectedId((id) => (id === elementId ? null : id));
       try {
         await channel.postTurn({ kind: "board-remove", elementId });
       } catch (err) {
@@ -145,7 +228,13 @@ export function useBoardSession({
   );
 
   const moveText = useCallback(
-    async (elementId: string, x: number, y: number) => {
+    async (
+      elementId: string,
+      x: number,
+      y: number,
+      width?: number,
+      fontSize?: number,
+    ) => {
       let previous: TextElement | undefined;
       setElements((prev) => {
         const found = prev.find((el) => el.id === elementId);
@@ -155,6 +244,8 @@ export function useBoardSession({
           elementId,
           x,
           y,
+          width,
+          fontSize,
         });
       });
       try {
@@ -163,6 +254,8 @@ export function useBoardSession({
           elementId,
           x,
           y,
+          width,
+          fontSize,
         });
       } catch (err) {
         console.error("Board text move failed", err);
@@ -173,6 +266,85 @@ export function useBoardSession({
               elementId,
               x: previous!.x,
               y: previous!.y,
+              width: previous!.width,
+              fontSize: previous!.fontSize,
+            }),
+          );
+        }
+      }
+    },
+    [channel],
+  );
+
+  const movePen = useCallback(
+    async (elementId: string, dx: number, dy: number) => {
+      if (dx === 0 && dy === 0) return;
+      setElements((prev) =>
+        applyBoardTurn(prev, { kind: "board-pen-move", elementId, dx, dy }),
+      );
+      try {
+        await channel.postTurn({
+          kind: "board-pen-move",
+          elementId,
+          dx,
+          dy,
+        });
+      } catch (err) {
+        console.error("Board pen move failed", err);
+        setElements((prev) =>
+          applyBoardTurn(prev, {
+            kind: "board-pen-move",
+            elementId,
+            dx: -dx,
+            dy: -dy,
+          }),
+        );
+      }
+    },
+    [channel],
+  );
+
+  const moveShape = useCallback(
+    async (
+      elementId: string,
+      x: number,
+      y: number,
+      width: number,
+      height: number,
+    ) => {
+      let previous: ShapeElement | undefined;
+      setElements((prev) => {
+        const found = prev.find((el) => el.id === elementId);
+        if (found?.tool === "shape") previous = found;
+        return applyBoardTurn(prev, {
+          kind: "board-shape-move",
+          elementId,
+          x,
+          y,
+          width,
+          height,
+        });
+      });
+      try {
+        await channel.postTurn({
+          kind: "board-shape-move",
+          elementId,
+          x,
+          y,
+          width,
+          height,
+        });
+      } catch (err) {
+        console.error("Board shape move failed", err);
+        if (previous) {
+          setElements((prev) =>
+            applyBoardTurn(prev, {
+              kind: "board-shape-move",
+              elementId,
+              x: previous!.x,
+              y: previous!.y,
+              width: previous!.width,
+              height: previous!.height,
             }),
           );
         }
@@ -194,6 +366,7 @@ export function useBoardSession({
         { x: 120, y: 180 },
       ],
       color: colorForAuthor("tutor"),
+      strokeWidth: DEFAULT_PEN_WEIGHT,
     });
     channel.injectTutorElement?.({
       id: newId("tutor-text"),
@@ -203,6 +376,8 @@ export function useBoardSession({
       y: 200,
       source: "Check the exponent: $x^{2}$",
       color: colorForAuthor("tutor"),
+      width: DEFAULT_TEXT_WIDTH,
+      fontSize: DEFAULT_TEXT_FONT_SIZE,
     });
   }, [channel]);
 
@@ -210,12 +385,26 @@ export function useBoardSession({
     elements,
     tool,
     setTool,
+    penColor,
+    setPenColor,
+    penWeight,
+    setPenWeight,
+    eraserSize,
+    setEraserSize,
+    shapeKind,
+    setShapeKind,
+    selectedId,
+    setSelectedId,
     livePoints,
     setLivePoints,
     commitStroke,
+    commitShape,
+    eraseStrokes,
     commitText,
     removeElement,
     moveText,
+    movePen,
+    moveShape,
     injectTutorDemo,
     channelMode: channel.mode,
   };

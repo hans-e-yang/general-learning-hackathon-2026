@@ -36,12 +36,26 @@ function BoardShell({ sessionUuid }: { sessionUuid: string }) {
     elements,
     tool,
     setTool,
+    penColor,
+    setPenColor,
+    penWeight,
+    setPenWeight,
+    eraserSize,
+    setEraserSize,
+    shapeKind,
+    setShapeKind,
+    selectedId,
+    setSelectedId,
     livePoints,
     setLivePoints,
     commitStroke,
+    commitShape,
+    eraseStrokes,
     commitText,
     removeElement,
     moveText,
+    movePen,
+    moveShape,
     injectTutorDemo,
   } = useBoardSession({ sessionUuid, mode: "stub" });
 
@@ -50,18 +64,36 @@ function BoardShell({ sessionUuid }: { sessionUuid: string }) {
       <BoardToolbar
         tool={tool}
         onToolChange={setTool}
+        penColor={penColor}
+        onPenColorChange={setPenColor}
+        penWeight={penWeight}
+        onPenWeightChange={setPenWeight}
+        eraserSize={eraserSize}
+        onEraserSizeChange={setEraserSize}
+        shapeKind={shapeKind}
+        onShapeKindChange={setShapeKind}
         showTutorInject={isDev}
         onTutorInject={injectTutorDemo}
       />
       <BoardSurface
         elements={elements}
         tool={tool}
+        penColor={penColor}
+        penWeight={penWeight}
+        eraserSize={eraserSize}
+        shapeKind={shapeKind}
+        selectedId={selectedId}
+        onSelectedIdChange={setSelectedId}
         livePoints={livePoints}
         onLivePointsChange={setLivePoints}
         onStrokeCommit={commitStroke}
+        onShapeCommit={commitShape}
+        onEraseStrokes={eraseStrokes}
         onTextCommit={commitText}
         onTextRemove={removeElement}
         onTextMove={moveText}
+        onPenMove={movePen}
+        onShapeMove={moveShape}
       />
     </div>
   );

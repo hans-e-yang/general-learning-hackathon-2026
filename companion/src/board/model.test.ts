@@ -21,10 +21,92 @@ describe("applyBoardTurn", () => {
       id: "p1",
       tool: "pen",
       author: "student",
+      strokeWidth: 2.5,
     });
   });
 
-  it("appends eraserMask without mutating prior elements", () => {
+  it("appends a shape", () => {
+    const next = applyBoardTurn([], {
+      kind: "board-shape",
+      element: {
+        id: "s1",
+        author: "student",
+        shape: "rect",
+        x: 10,
+        y: 20,
+        width: 40,
+        height: 30,
+      },
+    });
+    expect(next[0]).toMatchObject({
+      tool: "shape",
+      shape: "rect",
+      strokeWidth: 2.5,
+    });
+  });
+
+  it("translates a pen via board-pen-move", () => {
+    const withPen = applyBoardTurn([], {
+      kind: "board-pen",
+      element: {
+        id: "p1",
+        author: "student",
+        points: [
+          { x: 0, y: 0 },
+          { x: 10, y: 0 },
+        ],
+      },
+    });
+    const next = applyBoardTurn(withPen, {
+      kind: "board-pen-move",
+      elementId: "p1",
+      dx: 5,
+      dy: 3,
+    });
+    expect(next[0]).toMatchObject({
+      tool: "pen",
+      points: [
+        { x: 5, y: 3 },
+        { x: 15, y: 3 },
+      ],
+    });
+  });
+
+  it("removes whole pen strokes via board-eraser", () => {
+    const withPens = applyBoardTurn(
+      applyBoardTurn([], {
+        kind: "board-pen",
+        element: {
+          id: "p1",
+          author: "student",
+          points: [
+            { x: 0, y: 0 },
+            { x: 20, y: 0 },
+          ],
+          color: "#1a1a1a",
+        },
+      }),
+      {
+        kind: "board-pen",
+        element: {
+          id: "p2",
+          author: "student",
+          points: [
+            { x: 50, y: 50 },
+            { x: 70, y: 50 },
+          ],
+          color: "#1a1a1a",
+        },
+      },
+    );
+    const next = applyBoardTurn(withPens, {
+      kind: "board-eraser",
+      elementIds: ["p1"],
+    });
+    expect(next.map((el) => el.id)).toEqual(["p2"]);
+  });
+
+  it("board-eraser with empty ids is a no-op", () => {
     const withPen = applyBoardTurn([], {
       kind: "board-pen",
       element: {
@@ -37,20 +119,9 @@ describe("applyBoardTurn", () => {
         color: "#1a1a1a",
       },
     });
-    const next = applyBoardTurn(withPen, {
-      kind: "board-eraser",
-      element: {
-        id: "e1",
-        author: "student",
-        points: [
-          { x: 5, y: 0 },
-          { x: 15, y: 0 },
-        ],
-      },
-    });
-    expect(next).toHaveLength(2);
-    expect(next[0]).toEqual(withPen[0]);
-    expect(next[1]?.tool).toBe("eraserMask");
+    expect(
+      applyBoardTurn(withPen, { kind: "board-eraser", elementIds: [] }),
+    ).toEqual(withPen);
   });
 
   it("appends text and fills author color when omitted", () => {
@@ -69,6 +140,8 @@ describe("applyBoardTurn", () => {
       author: "tutor",
       color: "#b85c38",
       source: "hint",
+      width: 180,
+      fontSize: 16,
     });
   });
 
@@ -82,6 +155,7 @@ describe("applyBoardTurn", () => {
         { x: 2, y: 2 },
       ],
       color: "#b85c38",
+      strokeWidth: 2.5,
     });
     expect(next[0]?.author).toBe("tutor");
   });
@@ -150,7 +224,7 @@ describe("applyBoardTurn", () => {
 });
 
 describe("toRenderList", () => {
-  it("preserves list order as render order", () => {
+  it("preserves list order and drops legacy eraserMask", () => {
     const elements: BoardElement[] = [
       {
         id: "a",
@@ -158,6 +232,7 @@ describe("toRenderList", () => {
         author: "student",
         points: [{ x: 0, y: 0 }],
         color: "#1a1a1a",
+        strokeWidth: 2.5,
       },
       {
         id: "b",
@@ -173,8 +248,10 @@ describe("toRenderList", () => {
         y: 10,
         source: "ok",
         color: "#b85c38",
+        width: 180,
+        fontSize: 16,
       },
     ];
-    expect(toRenderList(elements).map((e) => e.id)).toEqual(["a", "b", "c"]);
+    expect(toRenderList(elements).map((e) => e.id)).toEqual(["a", "c"]);
   });
 });
