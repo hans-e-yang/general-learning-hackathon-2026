@@ -1,5 +1,6 @@
 import { looksLikeFinalAnswer } from "./answer-guard";
 import type {
+  AssessmentStatus,
   ExtractInput,
   ExtractedQuestion,
   HintEscalation,
@@ -7,6 +8,8 @@ import type {
   LLMAdapter,
   ScoutInput,
   ScoutVerdict,
+  TriageInput,
+  TriageVerdict,
   TutorInput,
   TutorTurn,
   WatchInput,
@@ -38,6 +41,55 @@ function hash32(s: string): number {
   return h >>> 0;
 }
 
+function scoutDraft(input: ScoutInput): { status: AssessmentStatus; reasoning: string } {
+  const draft = (input.draftText ?? "").trim();
+  if (draft.length === 0) {
+    return {
+      status: "blocked",
+      reasoning: "no attempt yet; the student has not typed anything",
+    };
+  }
+  const lower = draft.toLowerCase();
+  if (draft.length < 12) {
+    return {
+      status: "blocked",
+      reasoning: "draft is too short to evaluate",
+    };
+  }
+  if (looksLikeFinalAnswer(draft)) {
+    return {
+      status: "blocked",
+      reasoning: "draft looks like a pasted final answer",
+    };
+  }
+  const signals = ["therefore", "thus", "hence", "because", "so "];
+  const hasSignal = signals.some((w) => lower.includes(w));
+  const seed = hash32(`${input.captureHash}:${draft}`);
+  const roll = seed % 100;
+  if (hasSignal && roll > 30) {
+    return {
+      status: "solid",
+      reasoning: "draft cites reasoning and stays under the level-3 hint",
+    };
+  }
+  if (hasSignal) {
+    return {
+      status: "on-track",
+      reasoning: "draft shows the right direction; double-check the chain",
+    };
+  }
+  if (roll < 25) {
+    return {
+      status: "blocked",
+      reasoning: "draft does not yet show the reasoning being asked for",
+    };
+  }
+  return {
+    status: "on-track",
+    reasoning: "draft is heading in the right direction; keep going",
+  };
+}
+
 export class FakeAdapter implements LLMAdapter {
   readonly name = "fake";
 
@@ -55,51 +107,26 @@ export class FakeAdapter implements LLMAdapter {
   }
 
   async scout(input: ScoutInput): Promise<ScoutVerdict> {
-    const draft = (input.draftText ?? "").trim();
-    if (draft.length === 0) {
+    const { status, reasoning } = scoutDraft(input);
+    return { status, reasoning, escalate: status !== "solid" };
+  }
+
+  async triage(input: TriageInput): Promise<TriageVerdict> {
+    const hash = input.captureHash ?? "";
+    const lastHex = hash.length > 0 ? parseInt(hash[hash.length - 1], 16) : 0;
+    const update = Number.isNaN(lastHex) ? true : lastHex % 2 === 1;
+    if (!update) {
       return {
-        status: "blocked",
-        reasoning: "no attempt yet; the student has not typed anything",
+        update: false,
+        reason: "capture adds no information the session context lacks",
+        novelty: "none",
       };
     }
-    const lower = draft.toLowerCase();
-    if (draft.length < 12) {
-      return {
-        status: "blocked",
-        reasoning: "draft is too short to evaluate",
-      };
-    }
-    if (looksLikeFinalAnswer(draft)) {
-      return {
-        status: "blocked",
-        reasoning: "draft looks like a pasted final answer",
-      };
-    }
-    const signals = ["therefore", "thus", "hence", "because", "so "];
-    const hasSignal = signals.some((w) => lower.includes(w));
-    const seed = hash32(`${input.captureHash}:${draft}`);
-    const roll = seed % 100;
-    if (hasSignal && roll > 30) {
-      return {
-        status: "solid",
-        reasoning: "draft cites reasoning and stays under the level-3 hint",
-      };
-    }
-    if (hasSignal) {
-      return {
-        status: "on-track",
-        reasoning: "draft shows the right direction; double-check the chain",
-      };
-    }
-    if (roll < 25) {
-      return {
-        status: "blocked",
-        reasoning: "draft does not yet show the reasoning being asked for",
-      };
-    }
+    const novelty = lastHex >= 8 ? "new-material" : "new-questions";
     return {
-      status: "on-track",
-      reasoning: "draft is heading in the right direction; keep going",
+      update: true,
+      reason: `deterministic triage accepted hash ${hash.slice(0, 6)} as ${novelty}`,
+      novelty,
     };
   }
 

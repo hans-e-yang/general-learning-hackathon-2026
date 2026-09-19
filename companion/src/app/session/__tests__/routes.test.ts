@@ -258,7 +258,7 @@ describe("/session/:uuid/events GET (SSE)", () => {
     const accepted = buf.match(/event: material\.accepted/g) ?? [];
     expect(accepted.length).toBe(1);
     expect(buf).toContain(id2);
-    expect(buf).not.toContain(id1);
+    expect(buf).not.toContain(`event: material.accepted\ndata: {"captureId":"${id1}"`);
   });
 });
 
@@ -375,6 +375,50 @@ describe("/session/:uuid/turn idk (#23)", () => {
   });
 });
 
+describe("/session/:uuid/turn assess (#29)", () => {
+  it("runs Scout then conditionally publishes tutor.turn over SSE", async () => {
+    const s = (await (
+      await startSession(req("http://test.local/session", { method: "POST" }))
+    ).json()) as { uuid: string };
+    const state = getOrCreate(s.uuid);
+    state.worksheet = [
+      { id: "q-p0-0", index: 0, text: "Define continuity at a point.", status: "blocked" },
+    ];
+
+    const ctrl = new AbortController();
+    const res = await getEvents(
+      req(`http://test.local/session/${s.uuid}/events`, { signal: ctrl.signal }),
+      { params: Promise.resolve({ uuid: s.uuid }) }
+    );
+    const reader = res.body!.getReader();
+    const dec = new TextDecoder();
+    let buf = "";
+    const readUntil = async (p: (s: string) => boolean): Promise<void> => {
+      while (!p(buf)) {
+        const { value, done } = await reader.read();
+        if (done) return;
+        buf += dec.decode(value, { stream: true });
+      }
+    };
+    await readUntil((s) => s.includes("event: snapshot"));
+
+    const turnRes = await postTurn(
+      req(`http://test.local/session/${s.uuid}/turn`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ kind: "assess", questionId: "q-p0-0" }),
+      }),
+      { params: Promise.resolve({ uuid: s.uuid }) }
+    );
+    expect(turnRes.status).toBe(202);
+    await readUntil((s) => s.includes("event: tutor.turn"));
+    ctrl.abort();
+    reader.cancel();
+    expect(buf).toContain("event: assessment.tick");
+    expect(buf).toContain("event: tutor.turn");
+  });
+});
+
 describe("snapshot ghostSummary (#23)", () => {
   it("GET /session/:uuid carries ghostSummary after intervention fades", async () => {
     const s = (await (
@@ -438,6 +482,81 @@ describe("/session/:uuid/material POST -> SSE pipeline (#14/#15)", () => {
     expect(buf).toContain("event: material.accepted");
     expect(buf).toContain("event: extraction.update");
     expect(buf).toContain("q-p0-0");
+  });
+
+  it("publishes capture.triaged and skips extraction for a redundant frame (#28)", async () => {
+    const s = (await (
+      await startSession(req("http://test.local/session", { method: "POST" }))
+    ).json()) as { uuid: string };
+    getOrCreate(s.uuid);
+    const ctrl = new AbortController();
+    const res = await getEvents(
+      req(`http://test.local/session/${s.uuid}/events`, { signal: ctrl.signal }),
+      { params: Promise.resolve({ uuid: s.uuid }) }
+    );
+    const reader = res.body!.getReader();
+    const dec = new TextDecoder();
+    let buf = "";
+    const readUntil = async (p: (s: string) => boolean): Promise<void> => {
+      while (!p(buf)) {
+        const { value, done } = await reader.read();
+        if (done) return;
+        buf += dec.decode(value, { stream: true });
+      }
+    };
+    await readUntil((s) => s.includes("event: snapshot"));
+    await postMaterial(
+      req(`http://test.local/session/${s.uuid}/material`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(validCapture({ hash: "feedfacec0ffee0a" })),
+      }),
+      { params: Promise.resolve({ uuid: s.uuid }) }
+    );
+    await readUntil((s) => s.includes("event: capture.triaged"));
+    ctrl.abort();
+    reader.cancel();
+    expect(buf).toContain("event: capture.triaged");
+    expect(buf).toContain(`"update":false`);
+    expect(buf).toContain(`"novelty":"none"`);
+    expect(buf).not.toContain("event: extraction.update");
+  });
+
+  it("gates extraction on a positive triage verdict (#28)", async () => {
+    const s = (await (
+      await startSession(req("http://test.local/session", { method: "POST" }))
+    ).json()) as { uuid: string };
+    getOrCreate(s.uuid);
+    const ctrl = new AbortController();
+    const res = await getEvents(
+      req(`http://test.local/session/${s.uuid}/events`, { signal: ctrl.signal }),
+      { params: Promise.resolve({ uuid: s.uuid }) }
+    );
+    const reader = res.body!.getReader();
+    const dec = new TextDecoder();
+    let buf = "";
+    const readUntil = async (p: (s: string) => boolean): Promise<void> => {
+      while (!p(buf)) {
+        const { value, done } = await reader.read();
+        if (done) return;
+        buf += dec.decode(value, { stream: true });
+      }
+    };
+    await readUntil((s) => s.includes("event: snapshot"));
+    await postMaterial(
+      req(`http://test.local/session/${s.uuid}/material`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(validCapture({ hash: "feedfacec0ffee01" })),
+      }),
+      { params: Promise.resolve({ uuid: s.uuid }) }
+    );
+    await readUntil((s) => s.includes("event: extraction.update"));
+    ctrl.abort();
+    reader.cancel();
+    expect(buf).toContain("event: capture.triaged");
+    expect(buf).toContain(`"update":true`);
+    expect(buf).toContain("event: extraction.update");
   });
 
   it("publishes a watcher flag over SSE for even-hex captureHash (#22)", async () => {

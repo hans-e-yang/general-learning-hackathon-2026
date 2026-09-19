@@ -38,8 +38,25 @@ export type SessionInitResponse = z.infer<typeof SessionInitResponseSchema>;
 export const AssessmentStatusSchema = z.enum(["blocked", "on-track", "solid"]);
 export type AssessmentStatus = z.infer<typeof AssessmentStatusSchema>;
 
+export const ScoutVerdictSchema = z.object({
+  status: AssessmentStatusSchema,
+  reasoning: z.string().min(1),
+  escalate: z.boolean(),
+});
+export type ScoutVerdict = z.infer<typeof ScoutVerdictSchema>;
+
 export const WatchSeveritySchema = z.enum(["low", "medium", "high"]);
 export type WatchSeverity = z.infer<typeof WatchSeveritySchema>;
+
+export const TriageNoveltySchema = z.enum(["new-questions", "new-material", "none"]);
+export type TriageNovelty = z.infer<typeof TriageNoveltySchema>;
+
+export const TriageVerdictSchema = z.object({
+  update: z.boolean(),
+  reason: z.string().min(1),
+  novelty: TriageNoveltySchema.optional(),
+});
+export type TriageVerdict = z.infer<typeof TriageVerdictSchema>;
 
 export const WatchVerdictSchema = z.object({
   flag: z.boolean(),
@@ -53,6 +70,7 @@ export const TurnRequestSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("setMode"), mode: ModeSchema }),
   z.object({ kind: z.literal("saveDraft"), questionId: z.string(), draft: z.string() }),
   z.object({ kind: z.literal("requestCheck"), questionId: z.string() }),
+  z.object({ kind: z.literal("assess"), questionId: z.string() }),
   z.object({ kind: z.literal("ask"), questionId: z.string(), message: z.string().min(1) }),
   z.object({ kind: z.literal("idk"), questionId: z.string() }),
 ]);
@@ -112,6 +130,15 @@ export const SseEventSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("material.accepted"),
     data: z.object({ captureId: z.string(), deduped: z.boolean() }),
+  }),
+  z.object({
+    type: z.literal("capture.triaged"),
+    data: z.object({
+      captureId: z.string(),
+      update: z.boolean(),
+      reason: z.string().min(1),
+      novelty: TriageNoveltySchema.optional(),
+    }),
   }),
   z.object({
     type: z.literal("extraction.update"),

@@ -252,6 +252,73 @@ describe("opencode-adapter/scout + watch + idk", () => {
       escalation: "same",
     });
   });
+
+  it("derives escalate=true for a non-solid scout status when the model omits it (#29)", async () => {
+    fetchMock.mockResolvedValueOnce(
+      completion({ status: "on-track", reasoning: "right direction" })
+    );
+    const verdict = await adapter().scout({
+      captureHash: "h",
+      pageIndex: 0,
+      draftText: "therefore x = 1",
+    });
+    expect(verdict.escalate).toBe(true);
+  });
+
+  it("honors an explicit escalate=false from the model", async () => {
+    fetchMock.mockResolvedValueOnce(
+      completion({ status: "solid", reasoning: "sound", escalate: false })
+    );
+    const verdict = await adapter().scout({
+      captureHash: "h",
+      pageIndex: 0,
+      draftText: "by definition, therefore, hence",
+    });
+    expect(verdict.escalate).toBe(false);
+  });
+});
+
+describe("opencode-adapter/triage (#28)", () => {
+  it("sends the capture image to the vision model and validates the verdict", async () => {
+    fetchMock.mockResolvedValueOnce(
+      completion({ update: true, reason: "new questions", novelty: "new-questions" })
+    );
+    const verdict = await adapter().triage({
+      captureHash: "feedfacec0ffee01",
+      pageIndex: 0,
+      image: "Zm9v",
+      contextSummary: "questions=0; captures=0",
+    });
+    expect(verdict).toEqual({
+      update: true,
+      reason: "new questions",
+      novelty: "new-questions",
+    });
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    expect(body.model).toBe("test-vision");
+    const parts = body.messages[1].content as Array<Record<string, unknown>>;
+    expect(parts[1]).toEqual({
+      type: "image_url",
+      image_url: { url: "data:image/jpeg;base64,Zm9v" },
+    });
+  });
+
+  it("accepts a no-update verdict with no novelty", async () => {
+    fetchMock.mockResolvedValueOnce(
+      completion({ update: false, reason: "same page as before" })
+    );
+    const verdict = await adapter().triage({ captureHash: "h", pageIndex: 0 });
+    expect(verdict).toEqual({ update: false, reason: "same page as before" });
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    expect(typeof body.messages[1].content).toBe("string");
+  });
+
+  it("rejects a malformed triage verdict", async () => {
+    fetchMock.mockResolvedValueOnce(completion({ novelty: "none" }));
+    await expect(adapter().triage({ captureHash: "h", pageIndex: 0 })).rejects.toThrow(
+      /malformed output/
+    );
+  });
 });
 
 describe("opencode-adapter/parseJsonLoose", () => {

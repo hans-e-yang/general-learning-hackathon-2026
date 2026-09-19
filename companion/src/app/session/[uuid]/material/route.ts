@@ -1,6 +1,6 @@
 import { MaterialCaptureSchema } from "@/lib/contracts";
 import { publish } from "@/lib/session/bus";
-import { assessAllDrafts, extractFromCapture, watchOnCapture } from "@/lib/agent";
+import { assessAllDrafts, extractFromCapture, triageOnCapture, watchOnCapture } from "@/lib/agent";
 import { recordCapture } from "@/lib/session/store";
 
 export const runtime = "nodejs";
@@ -34,7 +34,16 @@ export async function POST(
       type: "material.accepted",
       data: { captureId, deduped: false },
     });
-    await extractFromCapture(uuid, parsed.data.hash, parsed.data.pageIndex, parsed.data.image);
+    const update = await triageOnCapture(
+      uuid,
+      captureId,
+      parsed.data.hash,
+      parsed.data.pageIndex,
+      parsed.data.image
+    );
+    if (update) {
+      await extractFromCapture(uuid, parsed.data.hash, parsed.data.pageIndex, parsed.data.image);
+    }
     await assessAllDrafts(uuid, {
       captureHash: parsed.data.hash,
       pageIndex: parsed.data.pageIndex,

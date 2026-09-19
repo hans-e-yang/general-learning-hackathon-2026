@@ -1,4 +1,4 @@
-import type { TurnRequest, WatchVerdict } from "@/lib/contracts";
+import type { TurnRequest, TriageVerdict, WatchVerdict } from "@/lib/contracts";
 import { publish } from "@/lib/session/bus";
 import { get, withLock } from "@/lib/session/store";
 import { SILENT_THRESHOLD, type GhostSummaryEntry } from "@/lib/session/types";
@@ -8,6 +8,7 @@ import type {
   IdkInput,
   LLMAdapter,
   ScoutInput,
+  TriageInput,
   TutorInput,
   TutorTurn,
   WatchInput,
@@ -74,6 +75,56 @@ export async function extractFromCapture(
       data: { partial, questions: [...state.worksheet] },
     });
   });
+}
+
+function contextDigest(state: NonNullable<ReturnType<typeof get>>): string {
+  const known = state.worksheet.map((q) => q.text).join(" | ");
+  return [
+    `questions=${state.worksheet.length}`,
+    `captures=${state.captures.length}`,
+    `text=${known.slice(0, 400)}`,
+  ].join("; ");
+}
+
+export async function triageOnCapture(
+  uuid: string,
+  captureId: string,
+  captureHash: string,
+  pageIndex: number,
+  image?: string
+): Promise<boolean> {
+  let update = true;
+  await withLock(uuid, async () => {
+    const state = get(uuid);
+    if (!state) return;
+    const { adapter, publishEvent } = depsOrDefault();
+    const input: TriageInput = {
+      captureHash,
+      pageIndex,
+      image,
+      contextSummary: contextDigest(state),
+    };
+    let verdict: TriageVerdict;
+    try {
+      verdict = await adapter.triage(input);
+    } catch {
+      verdict = {
+        update: true,
+        reason: "triage unavailable; defaulting to a context update",
+      };
+    }
+    update = verdict.update;
+    publishEvent(uuid, {
+      type: "capture.triaged",
+      data: {
+        captureId,
+        update: verdict.update,
+        reason: verdict.reason,
+        novelty: verdict.novelty,
+      },
+    });
+  });
+  return update;
 }
 
 export async function watchOnCapture(
@@ -246,6 +297,42 @@ export async function processTurn(uuid: string, turn: TurnRequest): Promise<void
             reasoning: verdict.reasoning,
           },
         });
+        return;
+      }
+      case "assess": {
+        const { adapter, publishEvent } = depsOrDefault();
+        const thread = state.threads[turn.questionId] ?? [];
+        const q = findQuestion(state, turn.questionId);
+        const draft = state.drafts[turn.questionId] ?? "";
+        const lastCapture =
+          state.captures.length > 0 ? state.captures[state.captures.length - 1] : undefined;
+        const verdict = await adapter.scout({
+          captureHash: lastCapture?.hash ?? "no-capture",
+          pageIndex: lastCapture?.pageIndex ?? 0,
+          questionText: q?.text,
+          draftText: draft,
+        });
+        publishEvent(uuid, {
+          type: "assessment.tick",
+          data: {
+            questionId: turn.questionId,
+            status: verdict.status,
+            reasoning: verdict.reasoning,
+          },
+        });
+        const prevLevel = thread.length === 0 ? 0 : thread[thread.length - 1].level;
+        if (!verdict.escalate || prevLevel >= MAX_LEVEL) return;
+        const tutorTurn = await adapter.tutor({
+          questionId: turn.questionId,
+          questionText: q?.text ?? "(question text unavailable)",
+          draftText: draft,
+          threadHistory: thread,
+          currentLevel: nextLevel(thread, 0),
+          captureHash: lastCapture?.hash,
+        });
+        thread.push(tutorTurn);
+        state.threads[turn.questionId] = thread;
+        publishEvent(uuid, { type: "tutor.turn", data: tutorTurn });
         return;
       }
       case "ask": {

@@ -5,7 +5,9 @@ import yaml from "js-yaml";
 import {
   MaterialCaptureSchema,
   ModeSchema,
+  ScoutVerdictSchema,
   SseEventSchema,
+  TriageVerdictSchema,
   TurnRequestSchema,
   parseMaterialCapture,
   safeParseSseEvent,
@@ -95,8 +97,39 @@ describe("contracts: TurnRequest", () => {
     ).toBe(true);
   });
 
+  it("accepts assess (#29)", () => {
+    expect(TurnRequestSchema.safeParse({ kind: "assess", questionId: "q1" }).success).toBe(
+      true
+    );
+  });
+
   it("rejects an unknown kind", () => {
     expect(TurnRequestSchema.safeParse({ kind: "nope" }).success).toBe(false);
+  });
+});
+
+describe("contracts: ScoutVerdict", () => {
+  it("requires the escalate gate", () => {
+    expect(
+      ScoutVerdictSchema.safeParse({ status: "on-track", reasoning: "x", escalate: true }).success
+    ).toBe(true);
+    expect(ScoutVerdictSchema.safeParse({ status: "on-track", reasoning: "x" }).success).toBe(
+      false
+    );
+  });
+});
+
+describe("contracts: TriageVerdict (#28)", () => {
+  it("accepts update/reason with an optional novelty", () => {
+    expect(TriageVerdictSchema.safeParse({ update: true, reason: "new" }).success).toBe(true);
+    expect(
+      TriageVerdictSchema.safeParse({ update: false, reason: "seen", novelty: "none" }).success
+    ).toBe(true);
+  });
+
+  it("rejects a verdict without update or reason", () => {
+    expect(TriageVerdictSchema.safeParse({ novelty: "none" }).success).toBe(false);
+    expect(TriageVerdictSchema.safeParse({ update: true }).success).toBe(false);
   });
 });
 
@@ -140,6 +173,20 @@ describe("contracts: SSE events", () => {
     expect(safeParseSseEvent(ev).success).toBe(false);
   });
 
+  it("accepts a capture.triaged event (#28)", () => {
+    const ev = {
+      type: "capture.triaged",
+      data: { captureId: "c1", update: false, reason: "already known", novelty: "none" },
+    };
+    expect(safeParseSseEvent(ev).success).toBe(true);
+  });
+
+  it("rejects a capture.triaged event without update/reason", () => {
+    expect(
+      safeParseSseEvent({ type: "capture.triaged", data: { captureId: "c1" } }).success
+    ).toBe(false);
+  });
+
   it("rejects an unknown event type", () => {
     expect(safeParseSseEvent({ type: "mystery", data: {} }).success).toBe(false);
   });
@@ -172,6 +219,7 @@ describe("contracts: openapi.yaml", () => {
     for (const name of [
       "SnapshotEvent",
       "MaterialAcceptedEvent",
+      "CaptureTriagedEvent",
       "ExtractionUpdateEvent",
       "AssessmentTickEvent",
       "TutorTurnEvent",
@@ -179,6 +227,19 @@ describe("contracts: openapi.yaml", () => {
     ]) {
       expect(schemas).toHaveProperty(name);
     }
+  });
+
+  it("declares the assess turn and the capture.triaged mapping", () => {
+    const schemas = (spec.components as { schemas: Record<string, unknown> }).schemas;
+    expect(schemas).toHaveProperty("AssessTurn");
+    const sse = schemas.SseEvent as {
+      discriminator: { mapping: Record<string, string> };
+    };
+    expect(sse.discriminator.mapping["capture.triaged"]).toBe(
+      "#/components/schemas/CaptureTriagedEvent"
+    );
+    const turn = spec.paths as { "/session/{uuid}/turn": { post: unknown } };
+    expect(turn["/session/{uuid}/turn"].post).toBeDefined();
   });
 
   it("never advertises a final-answer field on TutorTurn", () => {

@@ -3,12 +3,14 @@ import { clearForTests as clearBus, type BusEvent } from "@/lib/session/bus";
 import { clearForTests as clearStore, _seed, get } from "@/lib/session/store";
 import type { SessionState } from "@/lib/session/types";
 import { fakeAdapter } from "./fake-adapter";
+import type { LLMAdapter } from "./llm-adapter";
 import {
   assessAllDrafts,
   assessDraft,
   configureAgentLoop,
   extractFromCapture,
   processTurn,
+  triageOnCapture,
   watchOnCapture,
 } from "./loop";
 
@@ -38,6 +40,29 @@ function seedSession(uuid: string, partial: Partial<SessionState> = {}): Session
   };
   _seed(base);
   return base;
+}
+
+function stubAdapter(overrides: Partial<LLMAdapter> = {}): LLMAdapter {
+  return {
+    name: "stub",
+    extract: async () => [],
+    scout: async () => ({ status: "on-track", reasoning: "stub", escalate: true }),
+    triage: async () => ({ update: true, reason: "stub" }),
+    tutor: async (input) => ({
+      questionId: input.questionId,
+      hint: "stub hint",
+      level: 0,
+      escalation: "same",
+    }),
+    watch: async () => ({ flag: false, reasoning: "stub" }),
+    idk: async (input) => ({
+      questionId: input.questionId,
+      hint: "stub hint",
+      level: 0,
+      escalation: "same",
+    }),
+    ...overrides,
+  };
 }
 
 beforeEach(() => {
@@ -457,6 +482,143 @@ describe("agent/loop IDK (#23)", () => {
     const lower = data?.hint.toLowerCase() ?? "";
     expect(lower).not.toMatch(/the answer is/);
     expect(lower).not.toMatch(/final answer/);
+  });
+});
+
+describe("agent/loop capture triage (#28)", () => {
+  it("publishes capture.triaged and returns the verdict for a new frame", async () => {
+    const { events, publisher } = capture();
+    configureAgentLoop({ adapter: fakeAdapter, publishEvent: publisher });
+    seedSession("u1");
+    const update = await triageOnCapture("u1", "cap-1", "feedfacec0ffee01", 0);
+    expect(update).toBe(true);
+    const evt = events.find((e) => e.evt.type === "capture.triaged");
+    expect(evt).toBeDefined();
+    const data = evt!.evt.type === "capture.triaged" ? evt!.evt.data : null;
+    expect(data?.captureId).toBe("cap-1");
+    expect(data?.update).toBe(true);
+    expect(data?.novelty).toBe("new-questions");
+  });
+
+  it("returns false for a redundant frame", async () => {
+    const { events, publisher } = capture();
+    configureAgentLoop({ adapter: fakeAdapter, publishEvent: publisher });
+    seedSession("u1", {
+      worksheet: [{ id: "q1", index: 0, text: "x", status: "blocked" }],
+      captures: [
+        { captureId: "c1", pageIndex: 0, hash: "feedfacec0ffee01", timestamp: 1, deduped: false },
+      ],
+    });
+    const update = await triageOnCapture("u1", "cap-2", "feedfacec0ffee0a", 0);
+    expect(update).toBe(false);
+    const evt = events.find((e) => e.evt.type === "capture.triaged")!;
+    const data = evt.evt.type === "capture.triaged" ? evt.evt.data : null;
+    expect(data?.update).toBe(false);
+    expect(data?.novelty).toBe("none");
+  });
+
+  it("fails open (accepts the update) when the triage adapter throws", async () => {
+    const { events, publisher } = capture();
+    const adapter = stubAdapter({
+      triage: async () => {
+        throw new Error("boom");
+      },
+    });
+    configureAgentLoop({ adapter, publishEvent: publisher });
+    seedSession("u1");
+    const update = await triageOnCapture("u1", "cap-3", "feedfacec0ffee01", 0);
+    expect(update).toBe(true);
+    const evt = events.find((e) => e.evt.type === "capture.triaged")!;
+    expect(evt.evt.type === "capture.triaged" && evt.evt.data.update).toBe(true);
+  });
+});
+
+describe("agent/loop assess turn (#29)", () => {
+  it("publishes a tick and escalates to a tutor.turn when Scout says so", async () => {
+    const { events, publisher } = capture();
+    let tutorCalls = 0;
+    const adapter = stubAdapter({
+      scout: async () => ({ status: "on-track", reasoning: "needs a nudge", escalate: true }),
+      tutor: async (input) => {
+        tutorCalls += 1;
+        return { questionId: input.questionId, hint: "stub hint", level: 1, escalation: "up" };
+      },
+    });
+    configureAgentLoop({ adapter, publishEvent: publisher });
+    seedSession("u1", {
+      worksheet: [{ id: "q1", index: 0, text: "x", status: "blocked" }],
+      drafts: { q1: "partial attempt" },
+    });
+    await processTurn("u1", { kind: "assess", questionId: "q1" });
+    const types = events.map((e) => e.evt.type);
+    expect(types).toContain("assessment.tick");
+    expect(types).toContain("tutor.turn");
+    expect(types.indexOf("assessment.tick")).toBeLessThan(types.indexOf("tutor.turn"));
+    expect(tutorCalls).toBe(1);
+    expect(get("u1")?.threads.q1.length).toBe(1);
+  });
+
+  it("does not escalate when Scout returns solid", async () => {
+    const { events, publisher } = capture();
+    let tutorCalls = 0;
+    const adapter = stubAdapter({
+      scout: async () => ({ status: "solid", reasoning: "sound", escalate: false }),
+      tutor: async (input) => {
+        tutorCalls += 1;
+        return { questionId: input.questionId, hint: "stub", level: 0, escalation: "same" };
+      },
+    });
+    configureAgentLoop({ adapter, publishEvent: publisher });
+    seedSession("u1", {
+      worksheet: [{ id: "q1", index: 0, text: "x", status: "solid" }],
+      drafts: { q1: "by definition, therefore, hence" },
+    });
+    await processTurn("u1", { kind: "assess", questionId: "q1" });
+    const types = events.map((e) => e.evt.type);
+    expect(types).toContain("assessment.tick");
+    expect(types).not.toContain("tutor.turn");
+    expect(tutorCalls).toBe(0);
+  });
+
+  it("stays silent at the top of the hint ladder", async () => {
+    const { events, publisher } = capture();
+    let tutorCalls = 0;
+    const adapter = stubAdapter({
+      scout: async () => ({ status: "blocked", reasoning: "stuck", escalate: true }),
+      tutor: async (input) => {
+        tutorCalls += 1;
+        return { questionId: input.questionId, hint: "stub", level: 3, escalation: "same" };
+      },
+    });
+    configureAgentLoop({ adapter, publishEvent: publisher });
+    seedSession("u1", {
+      worksheet: [{ id: "q1", index: 0, text: "x", status: "blocked" }],
+      drafts: { q1: "stuck" },
+      threads: { q1: [{ questionId: "q1", hint: "prior", level: 3, escalation: "up" }] },
+    });
+    await processTurn("u1", { kind: "assess", questionId: "q1" });
+    const types = events.map((e) => e.evt.type);
+    expect(types).toContain("assessment.tick");
+    expect(types).not.toContain("tutor.turn");
+    expect(tutorCalls).toBe(0);
+  });
+
+  it("saveDraft keeps ticking without escalating (#29)", async () => {
+    const { events, publisher } = capture();
+    const adapter = stubAdapter({
+      scout: async () => ({ status: "on-track", reasoning: "needs a nudge", escalate: true }),
+    });
+    configureAgentLoop({ adapter, publishEvent: publisher });
+    seedSession("u1", {
+      worksheet: [{ id: "q1", index: 0, text: "x", status: "blocked" }],
+      captures: [
+        { captureId: "c1", pageIndex: 0, hash: "abcabcabcabcabca", timestamp: 1, deduped: false },
+      ],
+    });
+    await processTurn("u1", { kind: "saveDraft", questionId: "q1", draft: "partial attempt" });
+    const types = events.map((e) => e.evt.type);
+    expect(types).toContain("assessment.tick");
+    expect(types).not.toContain("tutor.turn");
   });
 });
 

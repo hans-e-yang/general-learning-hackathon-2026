@@ -68,6 +68,42 @@ describe("fake-adapter/scout", () => {
     const b = await fakeAdapter.scout(input);
     expect(a).toEqual(b);
   });
+
+  it("sets escalate true unless the draft is solid (#29)", async () => {
+    const noAttempt = await fakeAdapter.scout({ captureHash: "h", pageIndex: 0 });
+    expect(noAttempt.status).toBe("blocked");
+    expect(noAttempt.escalate).toBe(true);
+
+    const reasoning = await fakeAdapter.scout({
+      captureHash: "h",
+      pageIndex: 0,
+      draftText:
+        "We know the function is increasing on the interval, therefore the upper bound is at x = 2, hence the integral converges.",
+    });
+    expect(reasoning.escalate).toBe(reasoning.status !== "solid");
+  });
+});
+
+describe("fake-adapter/triage (#28)", () => {
+  it("accepts an odd-hex capture as new context with a novelty tag", async () => {
+    const r = await fakeAdapter.triage({ captureHash: "feedfacec0ffee01", pageIndex: 0 });
+    expect(r.update).toBe(true);
+    expect(r.novelty).toBe("new-questions");
+    expect(r.reason.length).toBeGreaterThan(0);
+  });
+
+  it("rejects an even-hex capture as already-known context", async () => {
+    const r = await fakeAdapter.triage({ captureHash: "feedfacec0ffee0a", pageIndex: 0 });
+    expect(r.update).toBe(false);
+    expect(r.novelty).toBe("none");
+  });
+
+  it("is deterministic for the same capture", async () => {
+    const input = { captureHash: "deadbeefdeadbeef", pageIndex: 0, contextSummary: "questions=1" };
+    const a = await fakeAdapter.triage(input);
+    const b = await fakeAdapter.triage(input);
+    expect(a).toEqual(b);
+  });
 });
 
 describe("fake-adapter/tutor", () => {

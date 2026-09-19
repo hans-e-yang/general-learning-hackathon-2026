@@ -123,7 +123,7 @@ paths:
   /session/{uuid}/turn:
     post:
       tags: [session]
-      summary: Student action (set mode, save draft, check, ask)
+      summary: Student action (set mode, save draft, check, assess, ask)
       parameters:
         - in: path
           name: uuid
@@ -140,6 +140,7 @@ paths:
                 - $ref: "#/components/schemas/SetModeTurn"
                 - $ref: "#/components/schemas/SaveDraftTurn"
                 - $ref: "#/components/schemas/RequestCheckTurn"
+                - $ref: "#/components/schemas/AssessTurn"
                 - $ref: "#/components/schemas/AskTurn"
                 - $ref: "#/components/schemas/IdkTurn"
               discriminator:
@@ -148,6 +149,7 @@ paths:
                   setMode: "#/components/schemas/SetModeTurn"
                   saveDraft: "#/components/schemas/SaveDraftTurn"
                   requestCheck: "#/components/schemas/RequestCheckTurn"
+                  assess: "#/components/schemas/AssessTurn"
                   ask: "#/components/schemas/AskTurn"
                   idk: "#/components/schemas/IdkTurn"
       responses:
@@ -227,6 +229,16 @@ components:
           enum: [requestCheck]
         questionId:
           type: string
+    AssessTurn:
+      type: object
+      required: [kind, questionId]
+      properties:
+        kind:
+          type: string
+          enum: [assess]
+        questionId:
+          type: string
+          description: Frontend-triggered Scout assessment; the Tutor speaks only if the verdict escalates
     AskTurn:
       type: object
       required: [kind, questionId, message]
@@ -347,6 +359,7 @@ components:
       oneOf:
         - $ref: "#/components/schemas/SnapshotEvent"
         - $ref: "#/components/schemas/MaterialAcceptedEvent"
+        - $ref: "#/components/schemas/CaptureTriagedEvent"
         - $ref: "#/components/schemas/ExtractionUpdateEvent"
         - $ref: "#/components/schemas/AssessmentTickEvent"
         - $ref: "#/components/schemas/TutorTurnEvent"
@@ -357,6 +370,7 @@ components:
         mapping:
           snapshot: "#/components/schemas/SnapshotEvent"
           material.accepted: "#/components/schemas/MaterialAcceptedEvent"
+          capture.triaged: "#/components/schemas/CaptureTriagedEvent"
           extraction.update: "#/components/schemas/ExtractionUpdateEvent"
           assessment.tick: "#/components/schemas/AssessmentTickEvent"
           tutor.turn: "#/components/schemas/TutorTurnEvent"
@@ -386,6 +400,27 @@ components:
               type: string
             deduped:
               type: boolean
+    CaptureTriagedEvent:
+      type: object
+      required: [type, data]
+      properties:
+        type:
+          type: string
+          enum: ["capture.triaged"]
+        data:
+          type: object
+          required: [captureId, update, reason]
+          properties:
+            captureId:
+              type: string
+            update:
+              type: boolean
+              description: true when the capture should update the session context (extraction runs)
+            reason:
+              type: string
+              minLength: 1
+            novelty:
+              $ref: "#/components/schemas/TriageNovelty"
     ExtractionUpdateEvent:
       type: object
       required: [type, data]
@@ -447,6 +482,20 @@ components:
         reasoning:
           type: string
           minLength: 1
+    TriageNovelty:
+      type: string
+      enum: [new-questions, new-material, none]
+    TriageVerdict:
+      type: object
+      required: [update, reason]
+      properties:
+        update:
+          type: boolean
+        reason:
+          type: string
+          minLength: 1
+        novelty:
+          $ref: "#/components/schemas/TriageNovelty"
     FlagEvent:
       type: object
       required: [type, data]

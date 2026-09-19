@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 import {
   ExtractedQuestionSchema,
+  TriageVerdictSchema,
   TutorTurnSchema,
   WatchVerdictSchema,
 } from "@/lib/contracts";
@@ -73,6 +74,23 @@ describe.skipIf(!LIVE)("opencode-adapter live (OpenCode Go)", () => {
       });
       expect(["blocked", "on-track", "solid"]).toContain(verdict.status);
       expect(verdict.reasoning.length).toBeGreaterThan(0);
+      expect(typeof verdict.escalate).toBe("boolean");
+    },
+    TIMEOUT
+  );
+
+  it(
+    "triage returns a contract-valid context-update verdict for a capture image",
+    async () => {
+      const verdict = await adapter.triage({
+        captureHash: HASH,
+        pageIndex: 0,
+        image: TINY_JPEG,
+        contextSummary: "questions=0; captures=0; text=",
+      });
+      expect(() => TriageVerdictSchema.parse(verdict)).not.toThrow();
+      expect(typeof verdict.update).toBe("boolean");
+      expect(verdict.reason.length).toBeGreaterThan(0);
     },
     TIMEOUT
   );

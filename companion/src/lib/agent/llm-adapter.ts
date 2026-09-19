@@ -1,7 +1,7 @@
 import type {
-  AssessmentStatus,
   ExtractedQuestion,
-  QuestionBlock,
+  ScoutVerdict,
+  TriageVerdict,
   TutorTurn,
   WatchVerdict,
 } from "@/lib/contracts";
@@ -11,6 +11,9 @@ export type {
   ExtractedQuestion,
   HintEscalation,
   QuestionBlock,
+  ScoutVerdict,
+  TriageNovelty,
+  TriageVerdict,
   TutorTurn,
   WatchSeverity,
   WatchVerdict,
@@ -21,11 +24,6 @@ export interface ScoutInput {
   pageIndex: number;
   questionText?: string;
   draftText?: string;
-}
-
-export interface ScoutVerdict {
-  status: AssessmentStatus;
-  reasoning: string;
 }
 
 export interface ExtractInput {
@@ -61,10 +59,18 @@ export interface IdkInput {
   draftText?: string;
 }
 
+export interface TriageInput {
+  captureHash: string;
+  pageIndex: number;
+  image?: string;
+  contextSummary?: string;
+}
+
 export interface LLMAdapter {
   readonly name: string;
   extract(input: ExtractInput): Promise<ExtractedQuestion[]>;
   scout(input: ScoutInput): Promise<ScoutVerdict>;
+  triage(input: TriageInput): Promise<TriageVerdict>;
   tutor(input: TutorInput): Promise<TutorTurn>;
   watch(input: WatchInput): Promise<WatchVerdict>;
   idk(input: IdkInput): Promise<TutorTurn>;

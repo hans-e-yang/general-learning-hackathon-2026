@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   AssessmentStatusSchema,
   HintEscalationSchema,
+  TriageVerdictSchema,
   WatchVerdictSchema,
   type ExtractedQuestion,
   type TutorTurn,
@@ -14,6 +15,8 @@ import type {
   LLMAdapter,
   ScoutInput,
   ScoutVerdict,
+  TriageInput,
+  TriageVerdict,
   TutorInput,
   WatchInput,
   WatchVerdict,
@@ -108,6 +111,7 @@ const ExtractResultSchema = z.object({
 const ScoutResultSchema = z.object({
   status: AssessmentStatusSchema,
   reasoning: z.string().min(1),
+  escalate: z.boolean().optional(),
 });
 
 const TutorResultSchema = z.object({
@@ -130,10 +134,11 @@ const EXTRACT_SYSTEM = [
 const SCOUT_SYSTEM = [
   "You are a fast assessment scout for a Socratic tutor.",
   "Given a worksheet question and a student's draft, judge how far the draft goes.",
-  'Respond with strict JSON: {"status":"blocked|on-track|solid","reasoning":"one short sentence"}.',
+  'Respond with strict JSON: {"status":"blocked|on-track|solid","reasoning":"one short sentence","escalate":true|false}.',
   "Use blocked when there is no attempt, the draft is too short to judge, or it looks like a pasted final answer.",
   "Use on-track when the direction is right but the reasoning is incomplete.",
   "Use solid when the draft states sound reasoning.",
+  "Set escalate=true when the draft would benefit from a Socratic nudge right now (blocked or on-track); false when it is solid.",
   "Never write the answer or any solution step.",
 ].join(" ");
 
@@ -160,6 +165,15 @@ const WATCH_SYSTEM = [
   "Set flag=false when the work is on track or not yet legible.",
   "When flag=true, severity reflects how serious the slip is and ghostKey is a short stable slug for the kind of slip (for example \"sign-error\" or \"unit-mismatch\") so repeats can be counted.",
   "Never provide the correction or the answer.",
+].join(" ");
+
+const TRIAGE_SYSTEM = [
+  "You decide whether a newly captured screen image carries information a study session does not already have.",
+  "You are given a digest of the session context (known questions and capture count) and the new capture image.",
+  'Respond with strict JSON: {"update":true|false,"reason":"one short sentence","novelty":"new-questions|new-material|none"}.',
+  "Set update=false when the image overlaps what is already captured (same page, a small scroll, no legible new content) and novelty=none.",
+  "Set update=true when the image reveals questions or material not represented in the digest; pick the matching novelty.",
+  "Never restate, answer, or solve anything.",
 ].join(" ");
 
 export interface OpenCodeAdapterOptions {
@@ -276,13 +290,33 @@ export class OpenCodeAdapter implements LLMAdapter {
   async scout(input: ScoutInput): Promise<ScoutVerdict> {
     const question = (input.questionText ?? "").trim() || "(question text unavailable)";
     const draft = (input.draftText ?? "").trim() || "(no attempt yet)";
-    return this.jsonCall(
+    const data = await this.jsonCall(
       [
         { role: "system", content: SCOUT_SYSTEM },
         { role: "user", content: `Question:\n${question}\n\nStudent draft:\n${draft}` },
       ],
       { model: this.textModel(), maxTokens: 600 },
       ScoutResultSchema
+    );
+    return {
+      status: data.status,
+      reasoning: data.reasoning,
+      escalate: data.escalate ?? data.status !== "solid",
+    };
+  }
+
+  async triage(input: TriageInput): Promise<TriageVerdict> {
+    const context = input.contextSummary?.trim() || "(no context captured yet)";
+    const instruction = input.image
+      ? `Session context digest:\n${context}\n\nDecide whether the attached capture adds new information.`
+      : `No image was attached; assess from the context only.\n\nSession context digest:\n${context}`;
+    return this.jsonCall(
+      [
+        { role: "system", content: TRIAGE_SYSTEM },
+        { role: "user", content: userContent(instruction, input.image) },
+      ],
+      { model: this.visionModel(), maxTokens: 500 },
+      TriageVerdictSchema
     );
   }
 
