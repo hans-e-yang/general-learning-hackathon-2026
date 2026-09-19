@@ -481,7 +481,8 @@ describe("agent/loop extract (#14)", () => {
     expect(state?.worksheet.length).toBeGreaterThan(0);
     for (const q of state!.worksheet) {
       expect(q.status).toBe("blocked");
-      expect(q.id).toMatch(/^q-p0-/);
+      expect(q.id).toMatch(/^q-/);
+      expect(q.label?.length).toBeGreaterThan(0);
     }
     const upd = events.find((e) => e.evt.type === "extraction.update");
     expect(upd).toBeDefined();
@@ -801,7 +802,16 @@ describe("agent/loop capture triage (#28)", () => {
 
   it("returns false for a redundant frame", async () => {
     const { events, publisher } = capture();
-    configureAgentLoop({ adapter: fakeAdapter, publishEvent: publisher });
+    configureAgentLoop({
+      adapter: stubAdapter({
+        triage: async () => ({
+          update: false,
+          reason: "already known",
+          novelty: "none",
+        }),
+      }),
+      publishEvent: publisher,
+    });
     seedSession("u1", {
       worksheet: [{ id: "q1", index: 0, text: "x", status: "blocked" }],
       captures: [

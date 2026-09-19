@@ -8,6 +8,7 @@ import {
   type TriageVerdict,
   type WatchVerdict,
 } from "@/lib/contracts";
+import { normalizeQuestionLabel } from "@/lib/questionLabel";
 import { publish } from "@/lib/session/bus";
 import { get, withLock } from "@/lib/session/store";
 import {
@@ -211,7 +212,14 @@ export async function extractFromCapture(
     let inserted = 0;
     for (const q of extracted) {
       if (!state.worksheet.find((w) => w.id === q.id)) {
-        state.worksheet.push({ ...q, status: "blocked" });
+        const label = normalizeQuestionLabel(q.label, q.index, q.text);
+        state.worksheet.push({
+          id: q.id,
+          index: state.worksheet.length,
+          text: q.text,
+          label,
+          status: "blocked",
+        });
         inserted += 1;
       }
     }

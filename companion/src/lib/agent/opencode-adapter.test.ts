@@ -142,8 +142,8 @@ describe("opencode-adapter/extract", () => {
     });
 
     expect(result).toEqual([
-      { id: "q-p2-0", index: 0, text: "Solve for x." },
-      { id: "q-p2-1", index: 1, text: "Find the limit." },
+      { id: "q-1", index: 0, text: "Solve for x.", label: "1" },
+      { id: "q-2", index: 1, text: "Find the limit.", label: "2" },
     ]);
 
     const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);

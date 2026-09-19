@@ -326,6 +326,16 @@ body {
   text-align: center;
 }
 
+.board-session-error {
+  margin: 0;
+  padding: 0.65rem 1rem;
+  border-bottom: 1px solid color-mix(in srgb, #b42318 35%, var(--line));
+  background: color-mix(in srgb, #b42318 8%, var(--paper));
+  color: #8a1c12;
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
 .board-stage {
   display: flex;
   flex-direction: column;

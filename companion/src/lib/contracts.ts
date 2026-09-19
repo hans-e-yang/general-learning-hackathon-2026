@@ -234,6 +234,8 @@ export const QuestionBlockSchema = z.object({
   id: z.string(),
   index: z.number().int().nonnegative(),
   text: z.string(),
+  /** Soft board title from the printed label (e.g. 1a, 2). Optional for older snapshots. */
+  label: z.string().min(1).optional(),
   status: AssessmentStatusSchema,
 });
 export type QuestionBlock = z.infer<typeof QuestionBlockSchema>;
@@ -242,6 +244,7 @@ export const ExtractedQuestionSchema = z.object({
   id: z.string(),
   index: z.number().int().nonnegative(),
   text: z.string(),
+  label: z.string().min(1).optional(),
 });
 export type ExtractedQuestion = z.infer<typeof ExtractedQuestionSchema>;
 

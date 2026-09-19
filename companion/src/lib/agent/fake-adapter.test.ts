@@ -2,33 +2,30 @@ import { describe, expect, it } from "vitest";
 import { fakeAdapter } from "./fake-adapter";
 
 describe("fake-adapter/extract", () => {
-  it("returns 1..3 deterministic questions for the same (hash, page)", async () => {
+  it("returns 2+ labeled questions with stable label-based IDs", async () => {
     const a = await fakeAdapter.extract({ captureHash: "feedfacec0ffee01", pageIndex: 0 });
     const b = await fakeAdapter.extract({ captureHash: "feedfacec0ffee01", pageIndex: 0 });
     expect(a).toEqual(b);
-    expect(a.length).toBeGreaterThanOrEqual(1);
-    expect(a.length).toBeLessThanOrEqual(3);
+    expect(a.length).toBeGreaterThanOrEqual(2);
     for (const q of a) {
-      expect(q.id.startsWith("q-p0-")).toBe(true);
+      expect(q.id).toMatch(/^q-[a-z0-9]+$/);
+      expect(q.label?.length).toBeGreaterThan(0);
       expect(q.text.length).toBeGreaterThan(0);
     }
   });
 
-  it("yields distinct questions across pages", async () => {
+  it("introduces new question IDs on later pages so boards can grow", async () => {
     const p0 = await fakeAdapter.extract({ captureHash: "feedfacec0ffee01", pageIndex: 0 });
     const p1 = await fakeAdapter.extract({ captureHash: "feedfacec0ffee01", pageIndex: 1 });
-    for (const q of p0) {
-      for (const q2 of p1) {
-        expect(q.id).not.toBe(q2.id);
-      }
-    }
+    const p0Ids = new Set(p0.map((q) => q.id));
+    expect(p1.some((q) => !p0Ids.has(q.id))).toBe(true);
   });
 
-  it("yields the same stable IDs for distinct captures on the same page (dedupe-friendly)", async () => {
+  it("keeps the same IDs for distinct captures of the same page (dedupe-friendly)", async () => {
     const h1 = await fakeAdapter.extract({ captureHash: "aaaaaaaaaaaaaaaa", pageIndex: 0 });
     const h2 = await fakeAdapter.extract({ captureHash: "bbbbbbbbbbbbbbbb", pageIndex: 0 });
     expect(h1.map((q) => q.id)).toEqual(h2.map((q) => q.id));
-    expect(h1[0].text).not.toBe(h2[0].text);
+    expect(h1.map((q) => q.label)).toEqual(h2.map((q) => q.label));
   });
 });
 
@@ -85,17 +82,16 @@ describe("fake-adapter/scout", () => {
 });
 
 describe("fake-adapter/triage (#28)", () => {
-  it("accepts an odd-hex capture as new context with a novelty tag", async () => {
+  it("always accepts captures so boards can grow", async () => {
     const r = await fakeAdapter.triage({ captureHash: "feedfacec0ffee01", pageIndex: 0 });
     expect(r.update).toBe(true);
     expect(r.novelty).toBe("new-questions");
     expect(r.reason.length).toBeGreaterThan(0);
   });
 
-  it("rejects an even-hex capture as already-known context", async () => {
+  it("still accepts even-hex captures (no silent drop)", async () => {
     const r = await fakeAdapter.triage({ captureHash: "feedfacec0ffee0a", pageIndex: 0 });
-    expect(r.update).toBe(false);
-    expect(r.novelty).toBe("none");
+    expect(r.update).toBe(true);
   });
 
   it("is deterministic for the same capture", async () => {

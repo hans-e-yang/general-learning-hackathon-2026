@@ -1,4 +1,6 @@
 import type { BoardAnnotationTurn } from "@/contracts/board";
+import { stableQuestionId } from "@/lib/questionIdentity";
+import { normalizeQuestionLabel } from "@/lib/questionLabel";
 import { looksLikeFinalAnswer } from "./answer-guard";
 import type {
   AnnotateInput,
@@ -25,6 +27,18 @@ const HINT_LADDER = [
   "What assumption are you making here? Name it before you continue.",
   "Try working the problem from the definition. What does each symbol mean?",
   "Walk me through each step. Do not yet write your final sentence.",
+];
+
+/** Stable bank so later captures grow boards instead of colliding on q-p0-N. */
+const QUESTION_BANK: { label: string; text: string }[] = [
+  { label: "1", text: "Question 1. Describe the sample space for this experiment." },
+  { label: "2", text: "Question 2. Compute P(A ∪ B) given the information on the page." },
+  { label: "3", text: "Question 3. Are events A and B independent? Justify briefly." },
+  { label: "4", text: "Question 4. Find the conditional probability P(A|B)." },
+  { label: "5", text: "Question 5. State Bayes' theorem and identify each term." },
+  { label: "6", text: "Question 6. Give an example of mutually exclusive events." },
+  { label: "7", text: "Question 7. Compute the expected value of the discrete r.v." },
+  { label: "8", text: "Question 8. Sketch the cdf of the distribution on the sheet." },
 ];
 
 const TUTOR_SYSTEM =
@@ -108,16 +122,22 @@ export class FakeAdapter implements LLMAdapter {
   readonly name = "fake";
 
   async extract(input: ExtractInput): Promise<ExtractedQuestion[]> {
-    const seed = hash32(`extract:${input.captureHash}:${input.pageIndex}`);
-    const n = (seed % 3) + 1;
-    const questions: ExtractedQuestion[] = [];
-    for (let i = 0; i < n; i += 1) {
-      const id = `q-p${input.pageIndex}-${i}`;
-      const tag = input.captureHash.slice(0, 4);
-      const text = `Question ${i + 1} on page ${input.pageIndex} (capture ${tag}…)`;
-      questions.push({ id, index: i, text });
-    }
-    return questions;
+    // Disjoint windows per pageIndex so scrolling/new pages add new boards.
+    const windowSize = 3;
+    const start = Math.min(
+      input.pageIndex * windowSize,
+      Math.max(0, QUESTION_BANK.length - windowSize),
+    );
+    return QUESTION_BANK.slice(start, start + windowSize).map((q, i) => {
+      const index = start + i;
+      const label = normalizeQuestionLabel(q.label, index, q.text);
+      return {
+        id: stableQuestionId(label, q.text),
+        index,
+        text: q.text,
+        label,
+      };
+    });
   }
 
   async scout(input: ScoutInput): Promise<ScoutVerdict> {
@@ -125,22 +145,12 @@ export class FakeAdapter implements LLMAdapter {
     return { status, reasoning, escalate: status !== "solid" };
   }
 
-  async triage(input: TriageInput): Promise<TriageVerdict> {
-    const hash = input.captureHash ?? "";
-    const lastHex = hash.length > 0 ? parseInt(hash[hash.length - 1], 16) : 0;
-    const update = Number.isNaN(lastHex) ? true : lastHex % 2 === 1;
-    if (!update) {
-      return {
-        update: false,
-        reason: "capture adds no information the session context lacks",
-        novelty: "none",
-      };
-    }
-    const novelty = lastHex >= 8 ? "new-material" : "new-questions";
+  async triage(_input: TriageInput): Promise<TriageVerdict> {
+    // Always accept so boards can grow as captures arrive (pageIndex is often 0).
     return {
       update: true,
-      reason: `deterministic triage accepted hash ${hash.slice(0, 6)} as ${novelty}`,
-      novelty,
+      reason: "accepting capture so newly visible questions can extend the worksheet",
+      novelty: "new-questions",
     };
   }
 

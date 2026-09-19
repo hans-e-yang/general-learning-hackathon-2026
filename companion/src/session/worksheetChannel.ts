@@ -4,6 +4,11 @@ import { z } from "zod";
 export type WorksheetQuestion = z.infer<typeof QuestionBlockSchema>;
 export type WorksheetListener = (questions: WorksheetQuestion[]) => void;
 
+export type SubscribeWorksheetOptions = {
+  baseUrl?: string;
+  onError?: () => void;
+};
+
 const ExtractionDataSchema = z.object({
   partial: z.boolean(),
   questions: z.array(QuestionBlockSchema),
@@ -15,7 +20,12 @@ export function questionsFromSsePayload(
 ): WorksheetQuestion[] | null {
   if (type === "snapshot") {
     const parsed = SessionSnapshotSchema.safeParse(data);
-    return parsed.success ? parsed.data.worksheet : null;
+    if (parsed.success) return parsed.data.worksheet;
+    // Tolerate snapshot drift: still pull worksheet if present.
+    const loose = z
+      .object({ worksheet: z.array(QuestionBlockSchema) })
+      .safeParse(data);
+    return loose.success ? loose.data.worksheet : null;
   }
   if (type === "extraction.update") {
     const parsed = ExtractionDataSchema.safeParse(data);
@@ -33,7 +43,7 @@ export function questionsFromSsePayload(
 export function subscribeWorksheet(
   sessionUuid: string,
   onQuestions: WorksheetListener,
-  options?: { baseUrl?: string },
+  options?: SubscribeWorksheetOptions,
 ): () => void {
   const base = (options?.baseUrl ?? "").replace(/\/$/, "");
   const url = `${base}/session/${sessionUuid}/events`;
@@ -55,6 +65,9 @@ export function subscribeWorksheet(
   source.addEventListener("extraction.update", (ev) => {
     handle("extraction.update", (ev as MessageEvent).data);
   });
+  source.onerror = () => {
+    options?.onError?.();
+  };
 
   return () => source.close();
 }

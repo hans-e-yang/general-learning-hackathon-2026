@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { BoardCarousel } from "@/board/BoardCarousel";
 import { BoardJumpStrip } from "@/board/BoardJumpStrip";
 import { BoardSurface } from "@/board/BoardSurface";
@@ -12,30 +12,38 @@ import { subscribeWorksheet } from "@/session/worksheetChannel";
 
 const SESSION_KEY = "circlr-session-uuid";
 
-function readSessionUuid(): string {
-  const params = new URLSearchParams(window.location.search);
-  const fromQuery = params.get("s");
-  if (fromQuery) return fromQuery;
-  const existing = window.localStorage.getItem(SESSION_KEY);
-  if (existing) return existing;
-  const created = crypto.randomUUID();
-  window.localStorage.setItem(SESSION_KEY, created);
-  return created;
+function readQuerySessionUuid(): string | null {
+  if (typeof window === "undefined") return null;
+  return new URLSearchParams(window.location.search).get("s");
 }
 
-function subscribeSession() {
-  return () => {};
+function subscribeSession(onStoreChange: () => void) {
+  window.addEventListener("popstate", onStoreChange);
+  return () => window.removeEventListener("popstate", onStoreChange);
 }
 
-function getSessionSnapshot(): string {
-  return readSessionUuid();
+function getSessionSnapshot(): string | null {
+  return readQuerySessionUuid();
 }
 
 function getServerSnapshot(): null {
   return null;
 }
 
+async function mintSessionUuid(): Promise<string> {
+  const res = await fetch("/session", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: "{}",
+  });
+  if (!res.ok) throw new Error(`POST /session failed: ${res.status}`);
+  const data = (await res.json()) as { uuid?: string };
+  if (!data.uuid) throw new Error("POST /session returned no uuid");
+  return data.uuid;
+}
+
 function BoardShell({ sessionUuid }: { sessionUuid: string }) {
+  const [sseError, setSseError] = useState<string | null>(null);
   const {
     questions,
     activeQuestionId,
@@ -69,15 +77,25 @@ function BoardShell({ sessionUuid }: { sessionUuid: string }) {
   } = useMultiBoardSession();
 
   useEffect(() => {
-    return subscribeWorksheet(sessionUuid, (qs) => {
-      // Soft titles are UI-derived until extract returns printed labels again.
-      syncQuestions(
-        qs.map((q) => ({
-          id: q.id,
-          label: normalizeQuestionLabel(undefined, q.index),
-        })),
-      );
-    });
+    setSseError(null);
+    return subscribeWorksheet(
+      sessionUuid,
+      (qs) => {
+        syncQuestions(
+          qs.map((q) => ({
+            id: q.id,
+            label: normalizeQuestionLabel(q.label, q.index, q.text),
+          })),
+        );
+      },
+      {
+        onError: () => {
+          setSseError(
+            "Cannot reach this Session’s events stream. Open Companion from the extension side panel so ?s= matches the capture Session.",
+          );
+        },
+      },
+    );
   }, [sessionUuid, syncQuestions]);
 
   const activeLabel =
@@ -102,6 +120,11 @@ function BoardShell({ sessionUuid }: { sessionUuid: string }) {
         shapeKind={shapeKind}
         onShapeKindChange={setShapeKind}
       />
+      {sseError ? (
+        <p className="board-session-error" role="alert">
+          {sseError}
+        </p>
+      ) : null}
       <BoardJumpStrip
         items={questions}
         activeId={activeQuestionId}
@@ -144,11 +167,55 @@ function BoardShell({ sessionUuid }: { sessionUuid: string }) {
 }
 
 export function BoardApp() {
-  const sessionUuid = useSyncExternalStore(
+  const queryUuid = useSyncExternalStore(
     subscribeSession,
     getSessionSnapshot,
     getServerSnapshot,
   );
+  const [mintedUuid, setMintedUuid] = useState<string | null>(null);
+  const [mintError, setMintError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (queryUuid) {
+      window.localStorage.setItem(SESSION_KEY, queryUuid);
+      setMintedUuid(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const existing = window.localStorage.getItem(SESSION_KEY);
+        const uuid = existing ?? (await mintSessionUuid());
+        if (cancelled) return;
+        window.localStorage.setItem(SESSION_KEY, uuid);
+        const url = new URL(window.location.href);
+        url.searchParams.set("s", uuid);
+        window.history.replaceState({}, "", url.toString());
+        setMintedUuid(uuid);
+      } catch (err) {
+        if (!cancelled) {
+          setMintError(
+            err instanceof Error ? err.message : "Failed to start a Session",
+          );
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [queryUuid]);
+
+  const sessionUuid = queryUuid ?? mintedUuid;
+
+  if (mintError) {
+    return (
+      <div className="board-app">
+        <p className="board-session-error" role="alert">
+          {mintError}
+        </p>
+      </div>
+    );
+  }
 
   if (!sessionUuid) {
     return <div className="board-app" aria-busy="true" />;

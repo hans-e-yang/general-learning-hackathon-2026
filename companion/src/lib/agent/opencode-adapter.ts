@@ -10,6 +10,8 @@ import {
   type ExtractedQuestion,
   type TutorTurn,
 } from "@/lib/contracts";
+import { stableQuestionId } from "@/lib/questionIdentity";
+import { normalizeQuestionLabel } from "@/lib/questionLabel";
 import { looksLikeFinalAnswer } from "./answer-guard";
 import type {
   AnnotateInput,
@@ -124,7 +126,12 @@ export function parseJsonLoose(raw: string): unknown {
 }
 
 const ExtractResultSchema = z.object({
-  questions: z.array(z.object({ text: z.string().min(1) })),
+  questions: z.array(
+    z.object({
+      text: z.string().min(1),
+      label: z.string().optional(),
+    }),
+  ),
 });
 
 const ScoutResultSchema = z.object({
@@ -172,9 +179,10 @@ const AnnotateResultSchema = z.object({
 
 const EXTRACT_SYSTEM = [
   "You extract exam questions from photos of student worksheets.",
-  'Respond with strict JSON: {"questions":[{"text":"..."}]}.',
+  'Respond with strict JSON: {"questions":[{"label":"1a","text":"..."}]}.',
+  "Use the printed question number/letter as label (e.g. 1, 1a, 2b). Treat sub-parts as separate questions.",
   "Transcribe each question faithfully in reading order; never answer, solve, or paraphrase.",
-  "Treat sub-parts as separate questions. If no question is legible, return an empty array.",
+  "If no question is legible, return an empty array.",
 ].join(" ");
 
 const SCOUT_SYSTEM = [
@@ -334,11 +342,16 @@ export class OpenCodeAdapter implements LLMAdapter {
       { model: this.visionModel(), maxTokens: VISION_MAX_TOKENS },
       ExtractResultSchema
     );
-    return data.questions.map((q, index) => ({
-      id: `q-p${input.pageIndex}-${index}`,
-      index,
-      text: q.text.trim(),
-    }));
+    return data.questions.map((q, index) => {
+      const text = q.text.trim();
+      const label = normalizeQuestionLabel(q.label, index, text);
+      return {
+        id: stableQuestionId(label, text),
+        index,
+        text,
+        label,
+      };
+    });
   }
 
   async scout(input: ScoutInput): Promise<ScoutVerdict> {
