@@ -139,3 +139,102 @@ export function findElementAtPoint(
   }
   return null;
 }
+
+export type SelectionRect = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+function rectsIntersect(a: SelectionRect, b: SelectionRect): boolean {
+  return (
+    a.x <= b.x + b.width &&
+    a.x + a.width >= b.x &&
+    a.y <= b.y + b.height &&
+    a.y + a.height >= b.y
+  );
+}
+
+/** Liang-Barsky: true when segment a→b touches the rect (degenerate = point). */
+function segmentIntersectsRect(
+  a: BoardPoint,
+  b: BoardPoint,
+  rect: SelectionRect,
+): boolean {
+  const xmin = rect.x;
+  const xmax = rect.x + rect.width;
+  const ymin = rect.y;
+  const ymax = rect.y + rect.height;
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const p = [-dx, dx, -dy, dy];
+  const q = [a.x - xmin, xmax - a.x, a.y - ymin, ymax - a.y];
+  let t0 = 0;
+  let t1 = 1;
+  for (let i = 0; i < 4; i++) {
+    if (p[i] === 0) {
+      if (q[i] < 0) return false;
+      continue;
+    }
+    const t = q[i] / p[i];
+    if (p[i] < 0) {
+      if (t > t1) return false;
+      if (t > t0) t0 = t;
+    } else {
+      if (t < t0) return false;
+      if (t < t1) t1 = t;
+    }
+  }
+  return true;
+}
+
+function elementRect(el: Extract<BoardElement, { tool: "shape" } | { tool: "text" }>) {
+  if (el.tool === "shape") {
+    const x0 = Math.min(el.x, el.x + el.width);
+    const y0 = Math.min(el.y, el.y + el.height);
+    return {
+      x: x0,
+      y: y0,
+      width: Math.abs(el.width),
+      height: Math.abs(el.height),
+    };
+  }
+  const h = el.fontSize * 1.6;
+  return { x: el.x, y: el.y - h * 0.3, width: el.width, height: h * 1.3 };
+}
+
+function elementIntersectsRect(
+  el: BoardElement,
+  rect: SelectionRect,
+): boolean {
+  if (el.tool === "eraserMask") return false;
+  if (el.tool === "pen") {
+    const pts = el.points;
+    if (pts.length === 0) return false;
+    if (pts.length === 1) return segmentIntersectsRect(pts[0], pts[0], rect);
+    for (let i = 0; i < pts.length - 1; i++) {
+      if (segmentIntersectsRect(pts[i], pts[i + 1], rect)) return true;
+    }
+    return false;
+  }
+  if (el.tool === "shape" && el.shape === "line") {
+    return segmentIntersectsRect(
+      { x: el.x, y: el.y },
+      { x: el.x + el.width, y: el.y + el.height },
+      rect,
+    );
+  }
+  return rectsIntersect(elementRect(el), rect);
+}
+
+/** Marquee selection: ids of every drawable touched by the selection rect. */
+export function findElementsInRect(
+  elements: readonly BoardElement[],
+  rect: SelectionRect,
+): string[] {
+  return elements
+    .filter((el) => elementIntersectsRect(el, rect))
+    .map((el) => el.id);
+}
+

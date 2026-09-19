@@ -9,7 +9,11 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { KatexText } from "@/board/KatexText";
-import { findElementAtPoint, findPenStrokesNearPoints } from "@/board/hitTest";
+import {
+  findElementAtPoint,
+  findElementsInRect,
+  findPenStrokesNearPoints,
+} from "@/board/hitTest";
 import { toRenderList } from "@/board/model";
 import type {
   BoardElement,
@@ -27,8 +31,8 @@ type BoardSurfaceProps = {
   penWeight: number;
   eraserSize: number;
   shapeKind: ShapeKind;
-  selectedId: string | null;
-  onSelectedIdChange: (id: string | null) => void;
+  selectedIds: string[];
+  onSelectedIdsChange: (ids: string[]) => void;
   livePoints: BoardPoint[] | null;
   onLivePointsChange: (points: BoardPoint[] | null) => void;
   onStrokeCommit: (points: BoardPoint[]) => void;
@@ -49,14 +53,7 @@ type BoardSurfaceProps = {
     width?: number,
     fontSize?: number,
   ) => void;
-  onPenMove: (elementId: string, dx: number, dy: number) => void;
-  onShapeMove: (
-    elementId: string,
-    x: number,
-    y: number,
-    width: number,
-    height: number,
-  ) => void;
+  onMoveSelection: (elementIds: string[], dx: number, dy: number) => void;
 };
 
 type DraftText = { x: number; y: number; value: string };
@@ -79,15 +76,16 @@ type TextDrag = {
   moved: boolean;
 };
 
-type SelectDrag = {
-  id: string;
-  kind: "pen" | "shape" | "text";
-  startX: number;
-  startY: number;
-  lastX: number;
-  lastY: number;
-  origin: BoardElement;
-};
+type SelectGesture =
+  | {
+      mode: "marquee";
+      x0: number;
+      y0: number;
+      x1: number;
+      y1: number;
+      additive: boolean;
+    }
+  | { mode: "move"; startX: number; startY: number };
 
 type ShapeDraft = {
   x0: number;
@@ -238,8 +236,8 @@ export function BoardSurface({
   penWeight,
   eraserSize,
   shapeKind,
-  selectedId,
-  onSelectedIdChange,
+  selectedIds,
+  onSelectedIdsChange,
   livePoints,
   onLivePointsChange,
   onStrokeCommit,
@@ -248,8 +246,7 @@ export function BoardSurface({
   onTextCommit,
   onTextRemove,
   onTextMove,
-  onPenMove,
-  onShapeMove,
+  onMoveSelection,
 }: BoardSurfaceProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -258,7 +255,8 @@ export function BoardSurface({
   const draftDoneRef = useRef(false);
   const draftRef = useRef<DraftText | null>(null);
   const textDragRef = useRef<TextDrag | null>(null);
-  const selectDragRef = useRef<SelectDrag | null>(null);
+  const selectGestureRef = useRef<SelectGesture | null>(null);
+  const selectedIdsRef = useRef(selectedIds);
   const elementsRef = useRef(elements);
   const erasedThisGestureRef = useRef(new Set<string>());
   const gestureIsEraserRef = useRef(false);
@@ -266,10 +264,24 @@ export function BoardSurface({
   const [textDrag, setTextDrag] = useState<TextDrag | null>(null);
   const [eraserTip, setEraserTip] = useState<BoardPoint | null>(null);
   const [shapeDraft, setShapeDraft] = useState<ShapeDraft | null>(null);
+  const [marquee, setMarquee] = useState<{
+    x0: number;
+    y0: number;
+    x1: number;
+    y1: number;
+  } | null>(null);
+  const [selectPreview, setSelectPreview] = useState<{
+    dx: number;
+    dy: number;
+  } | null>(null);
 
   useLayoutEffect(() => {
     elementsRef.current = elements;
   }, [elements]);
+
+  useLayoutEffect(() => {
+    selectedIdsRef.current = selectedIds;
+  }, [selectedIds]);
 
   useLayoutEffect(() => {
     draftRef.current = draftText;
@@ -310,6 +322,99 @@ export function BoardSurface({
     [eraserSize, onEraseStrokes],
   );
 
+  /**
+   * Start a Select gesture. A hit on an element drags the current selection
+   * (or that element); empty space draws a marquee that selects on release.
+   */
+  const beginSelectGesture = useCallback(
+    (pt: BoardPoint, hitId: string | null, additive: boolean) => {
+      const current = selectedIdsRef.current;
+      if (hitId) {
+        let next = current;
+        if (!current.includes(hitId)) {
+          next = additive ? [...current, hitId] : [hitId];
+        }
+        if (next !== current) {
+          selectedIdsRef.current = next;
+          onSelectedIdsChange(next);
+        }
+        selectGestureRef.current = { mode: "move", startX: pt.x, startY: pt.y };
+        setMarquee(null);
+        setSelectPreview(null);
+        return;
+      }
+      if (!additive && current.length > 0) {
+        selectedIdsRef.current = [];
+        onSelectedIdsChange([]);
+      }
+      selectGestureRef.current = {
+        mode: "marquee",
+        x0: pt.x,
+        y0: pt.y,
+        x1: pt.x,
+        y1: pt.y,
+        additive,
+      };
+      setSelectPreview(null);
+      setMarquee({ x0: pt.x, y0: pt.y, x1: pt.x, y1: pt.y });
+    },
+    [onSelectedIdsChange],
+  );
+
+  const updateSelectGesture = useCallback((pt: BoardPoint) => {
+    const gesture = selectGestureRef.current;
+    if (!gesture) return false;
+    if (gesture.mode === "marquee") {
+      gesture.x1 = pt.x;
+      gesture.y1 = pt.y;
+      setMarquee({
+        x0: gesture.x0,
+        y0: gesture.y0,
+        x1: gesture.x1,
+        y1: gesture.y1,
+      });
+      return true;
+    }
+    setSelectPreview({ dx: pt.x - gesture.startX, dy: pt.y - gesture.startY });
+    return true;
+  }, []);
+
+  const finishSelectGesture = useCallback(
+    (pt: BoardPoint) => {
+      const gesture = selectGestureRef.current;
+      if (!gesture) return false;
+      selectGestureRef.current = null;
+      setMarquee(null);
+      setSelectPreview(null);
+
+      if (gesture.mode === "marquee") {
+        const rect = normalizeShapeRect(gesture);
+        if (rect.width < 2 && rect.height < 2) {
+          if (!gesture.additive) {
+            selectedIdsRef.current = [];
+            onSelectedIdsChange([]);
+          }
+          return true;
+        }
+        const ids = findElementsInRect(elementsRef.current, rect);
+        const next = gesture.additive
+          ? [...new Set([...selectedIdsRef.current, ...ids])]
+          : ids;
+        selectedIdsRef.current = next;
+        onSelectedIdsChange(next);
+        return true;
+      }
+
+      const dx = pt.x - gesture.startX;
+      const dy = pt.y - gesture.startY;
+      if (Math.hypot(dx, dy) >= 2) {
+        onMoveSelection(selectedIdsRef.current, dx, dy);
+      }
+      return true;
+    },
+    [onMoveSelection, onSelectedIdsChange],
+  );
+
   const finishDraft = useCallback(
     (mode: "commit" | "cancel") => {
       const draft = draftRef.current;
@@ -329,6 +434,15 @@ export function BoardSurface({
 
   const endTextDrag = useCallback(
     (e: ReactPointerEvent<HTMLElement>) => {
+      if (selectGestureRef.current) {
+        try {
+          e.currentTarget.releasePointerCapture(e.pointerId);
+        } catch {
+          /* */
+        }
+        finishSelectGesture(clientToBoard(e.clientX, e.clientY));
+        return;
+      }
       const current = textDragRef.current;
       if (!current) return;
       try {
@@ -348,7 +462,7 @@ export function BoardSurface({
         );
       }
     },
-    [onTextMove],
+    [clientToBoard, finishSelectGesture, onTextMove],
   );
 
   const onTextPointerDown = (
@@ -359,8 +473,18 @@ export function BoardSurface({
     if ((e.target as HTMLElement).closest(".board-text-close")) return;
     e.stopPropagation();
     e.preventDefault();
-    if (tool === "select") onSelectedIdChange(el.id);
     const pointer = clientToBoard(e.clientX, e.clientY);
+    // Select tool: the chip is part of the marquee group, so drag the whole
+    // selection instead of creating a single-text drag.
+    if (tool === "select" && mode === "move") {
+      beginSelectGesture(pointer, el.id, e.shiftKey);
+      e.currentTarget.setPointerCapture(e.pointerId);
+      return;
+    }
+    if (tool === "select") {
+      onSelectedIdsChange([el.id]);
+      selectedIdsRef.current = [el.id];
+    }
     const next: TextDrag = {
       mode,
       id: el.id,
@@ -384,6 +508,10 @@ export function BoardSurface({
   };
 
   const onTextPointerMove = (e: ReactPointerEvent<HTMLElement>) => {
+    if (selectGestureRef.current) {
+      updateSelectGesture(clientToBoard(e.clientX, e.clientY));
+      return;
+    }
     const current = textDragRef.current;
     if (!current) return;
     // Allow move/resize handlers from chip or resize handle.
@@ -433,18 +561,11 @@ export function BoardSurface({
 
     if (tool === "select") {
       const hit = findElementAtPoint(elementsRef.current, pt);
-      onSelectedIdChange(hit?.id ?? null);
-      if (hit && hit.tool !== "eraserMask") {
-        selectDragRef.current = {
-          id: hit.id,
-          kind: hit.tool,
-          startX: pt.x,
-          startY: pt.y,
-          lastX: pt.x,
-          lastY: pt.y,
-          origin: hit,
-        };
-      }
+      beginSelectGesture(
+        pt,
+        hit && hit.tool !== "eraserMask" ? hit.id : null,
+        e.shiftKey,
+      );
       return;
     }
 
@@ -467,14 +588,15 @@ export function BoardSurface({
   };
 
   const onPointerMove = (e: ReactPointerEvent<SVGSVGElement>) => {
-    if (!drawingRef.current) return;
     const pt = clientToBoard(e.clientX, e.clientY);
 
-    if (tool === "select" && selectDragRef.current) {
-      selectDragRef.current.lastX = pt.x;
-      selectDragRef.current.lastY = pt.y;
+    // Eraser ring follows the pointer on hover too, so the tool has a cursor.
+    if (!drawingRef.current) {
+      if (tool === "eraserMask") setEraserTip(pt);
       return;
     }
+
+    if (tool === "select" && updateSelectGesture(pt)) return;
 
     if (gestureIsEraserRef.current) {
       setEraserTip(pt);
@@ -493,6 +615,10 @@ export function BoardSurface({
     }
   };
 
+  const onPointerLeave = () => {
+    if (tool === "eraserMask" && !drawingRef.current) setEraserTip(null);
+  };
+
   const endStroke = (e: ReactPointerEvent<SVGSVGElement>) => {
     if (!drawingRef.current) return;
     drawingRef.current = false;
@@ -502,31 +628,13 @@ export function BoardSurface({
       /* */
     }
 
-    if (tool === "select" && selectDragRef.current) {
-      const drag = selectDragRef.current;
-      const pt = clientToBoard(e.clientX, e.clientY);
-      const dx = pt.x - drag.startX;
-      const dy = pt.y - drag.startY;
-      selectDragRef.current = null;
-      if (Math.hypot(dx, dy) < 2) return;
-      if (drag.kind === "pen") onPenMove(drag.id, dx, dy);
-      else if (drag.kind === "shape" && drag.origin.tool === "shape") {
-        onShapeMove(
-          drag.id,
-          drag.origin.x + dx,
-          drag.origin.y + dy,
-          drag.origin.width,
-          drag.origin.height,
-        );
-      } else if (drag.kind === "text" && drag.origin.tool === "text") {
-        onTextMove(drag.id, drag.origin.x + dx, drag.origin.y + dy);
-      }
+    if (tool === "select") {
+      finishSelectGesture(clientToBoard(e.clientX, e.clientY));
       return;
     }
 
     if (gestureIsEraserRef.current) {
       gestureIsEraserRef.current = false;
-      setEraserTip(null);
       erasedThisGestureRef.current = new Set();
       return;
     }
@@ -558,6 +666,12 @@ export function BoardSurface({
     (el): el is TextElement => el.tool === "text",
   );
   const renderElements = toRenderList(elements);
+  const selectedSet = new Set(selectedIds);
+
+  const previewTransform = (id: string) =>
+    selectPreview && selectedSet.has(id)
+      ? `translate(${selectPreview.dx} ${selectPreview.dy})`
+      : undefined;
 
   const surfaceClass =
     tool === "text"
@@ -580,6 +694,7 @@ export function BoardSurface({
         onPointerMove={onPointerMove}
         onPointerUp={endStroke}
         onPointerCancel={endStroke}
+        onPointerLeave={onPointerLeave}
       >
         <rect
           x={0}
@@ -598,13 +713,14 @@ export function BoardSurface({
               <path
                 key={el.id}
                 d={d}
+                transform={previewTransform(el.id)}
                 stroke={el.color}
                 strokeWidth={el.strokeWidth}
                 strokeLinecap="round"
                 strokeLinejoin="round"
                 fill="none"
                 data-author={el.author}
-                className={selectedId === el.id ? "is-selected" : undefined}
+                className={selectedSet.has(el.id) ? "is-selected" : undefined}
               />
             );
           }
@@ -612,7 +728,8 @@ export function BoardSurface({
             return (
               <g
                 key={el.id}
-                className={selectedId === el.id ? "is-selected" : undefined}
+                transform={previewTransform(el.id)}
+                className={selectedSet.has(el.id) ? "is-selected" : undefined}
               >
                 {renderShape(el)}
               </g>
@@ -642,12 +759,22 @@ export function BoardSurface({
           />
         ) : null}
 
-        {eraserTip ? (
+        {tool === "eraserMask" && eraserTip ? (
           <circle
             className="board-eraser-tip"
             cx={eraserTip.x}
             cy={eraserTip.y}
             r={eraserSize}
+          />
+        ) : null}
+
+        {marquee ? (
+          <rect
+            className="board-marquee"
+            x={Math.min(marquee.x0, marquee.x1)}
+            y={Math.min(marquee.y0, marquee.y1)}
+            width={Math.abs(marquee.x1 - marquee.x0)}
+            height={Math.abs(marquee.y1 - marquee.y0)}
           />
         ) : null}
       </svg>
@@ -656,7 +783,7 @@ export function BoardSurface({
 
       <div className="board-coord-plane">
         {textElements.map((el) => {
-          const pos =
+          const base =
             textDrag?.id === el.id
               ? {
                   x: textDrag.x,
@@ -670,7 +797,15 @@ export function BoardSurface({
                   width: el.width,
                   fontSize: el.fontSize,
                 };
-          const selected = selectedId === el.id;
+          const selected = selectedSet.has(el.id);
+          const pos =
+            selectPreview && selected
+              ? {
+                  ...base,
+                  x: base.x + selectPreview.dx,
+                  y: base.y + selectPreview.dy,
+                }
+              : base;
           return (
             <div
               key={el.id}

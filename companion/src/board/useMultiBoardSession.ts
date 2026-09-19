@@ -92,7 +92,7 @@ export function useMultiBoardSession({
   const [penWeight, setPenWeight] = useState(DEFAULT_PEN_WEIGHT);
   const [eraserSize, setEraserSize] = useState(DEFAULT_ERASER_SIZE);
   const [shapeKind, setShapeKind] = useState<ShapeKind>("rect");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [livePoints, setLivePoints] = useState<BoardPoint[] | null>(null);
   /** Bumped only by student ink; agent marks must not restart the idle timer. */
   const [revision, setRevision] = useState(0);
@@ -180,7 +180,7 @@ export function useMultiBoardSession({
         const next = typeof resolve === "function" ? resolve(prev) : resolve;
         if (next !== prev) {
           setLivePoints(null);
-          setSelectedId(null);
+          setSelectedIds([]);
         }
         return next;
       });
@@ -303,7 +303,7 @@ export function useMultiBoardSession({
       updateActiveBoard((prev) =>
         applyBoardTurn(prev, { kind: "board-eraser", elementIds: unique }),
       );
-      setSelectedId((id) => (id && unique.includes(id) ? null : id));
+      setSelectedIds((ids) => ids.filter((id) => !unique.includes(id)));
     },
     [activeQuestionId, updateActiveBoard],
   );
@@ -338,7 +338,7 @@ export function useMultiBoardSession({
       updateActiveBoard((prev) =>
         applyBoardTurn(prev, { kind: "board-remove", elementId }),
       );
-      setSelectedId((id) => (id === elementId ? null : id));
+      setSelectedIds((ids) => ids.filter((id) => id !== elementId));
     },
     [activeQuestionId, updateActiveBoard],
   );
@@ -399,6 +399,50 @@ export function useMultiBoardSession({
     [activeQuestionId, updateActiveBoard],
   );
 
+  /**
+   * Move every selected element by dx/dy as one revision, so a marquee drag
+   * ships the board to the agent once rather than once per element.
+   */
+  const moveSelection = useCallback(
+    (ids: string[], dx: number, dy: number) => {
+      if (activeQuestionId === null) return;
+      if (ids.length === 0 || (dx === 0 && dy === 0)) return;
+      const selected = new Set(ids);
+      updateActiveBoard((prev) => {
+        let next = prev;
+        for (const el of prev) {
+          if (!selected.has(el.id)) continue;
+          if (el.tool === "pen") {
+            next = applyBoardTurn(next, {
+              kind: "board-pen-move",
+              elementId: el.id,
+              dx,
+              dy,
+            });
+          } else if (el.tool === "shape") {
+            next = applyBoardTurn(next, {
+              kind: "board-shape-move",
+              elementId: el.id,
+              x: el.x + dx,
+              y: el.y + dy,
+              width: el.width,
+              height: el.height,
+            });
+          } else if (el.tool === "text") {
+            next = applyBoardTurn(next, {
+              kind: "board-text-move",
+              elementId: el.id,
+              x: el.x + dx,
+              y: el.y + dy,
+            });
+          }
+        }
+        return next;
+      });
+    },
+    [activeQuestionId, updateActiveBoard],
+  );
+
   /** Stub-only: drop an agent mark onto a named board for local rehearsal. */
   const injectTutorElement = useCallback(
     (questionId: string, element: BoardElement) => {
@@ -432,8 +476,8 @@ export function useMultiBoardSession({
     setEraserSize,
     shapeKind,
     setShapeKind,
-    selectedId,
-    setSelectedId,
+    selectedIds,
+    setSelectedIds,
     livePoints,
     setLivePoints,
     commitStroke,
@@ -444,6 +488,7 @@ export function useMultiBoardSession({
     moveText,
     movePen,
     moveShape,
+    moveSelection,
     injectTutorElement,
     dismissTutorMarks,
     channelMode: channel?.mode ?? ("stub" as const),

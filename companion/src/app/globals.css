@@ -569,9 +569,19 @@ body {
 }
 
 .board-eraser-tip {
-  fill: color-mix(in srgb, var(--ink-muted) 12%, transparent);
-  stroke: color-mix(in srgb, var(--ink-muted) 45%, transparent);
+  fill: color-mix(in srgb, var(--ink-muted) 10%, transparent);
+  stroke: color-mix(in srgb, #b42318 75%, transparent);
   stroke-width: 1.5;
+  stroke-dasharray: 5 3;
+  pointer-events: none;
+}
+
+.board-marquee {
+  fill: color-mix(in srgb, var(--focus) 12%, transparent);
+  stroke: color-mix(in srgb, var(--focus) 80%, transparent);
+  stroke-width: 1.5;
+  stroke-dasharray: 6 4;
+  vector-effect: non-scaling-stroke;
   pointer-events: none;
 }
 

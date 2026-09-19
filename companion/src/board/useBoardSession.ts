@@ -50,7 +50,7 @@ export function useBoardSession({
   const [penWeight, setPenWeight] = useState(DEFAULT_PEN_WEIGHT);
   const [eraserSize, setEraserSize] = useState(DEFAULT_ERASER_SIZE);
   const [shapeKind, setShapeKind] = useState<ShapeKind>("rect");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [livePoints, setLivePoints] = useState<BoardPoint[] | null>(null);
 
   const channel = useMemo<BoardChannel>(
@@ -64,7 +64,7 @@ export function useBoardSession({
         setElements((prev) => applyBoardElement(prev, event.element));
       } else if (event.type === "board.remove") {
         setElements((prev) => removeBoardElement(prev, event.elementId));
-        setSelectedId((id) => (id === event.elementId ? null : id));
+        setSelectedIds((ids) => ids.filter((id) => id !== event.elementId));
       } else if (event.type === "board.text-move") {
         setElements((prev) =>
           applyBoardTurn(prev, {
@@ -168,7 +168,7 @@ export function useBoardSession({
           elementIds: unique,
         });
       });
-      setSelectedId((id) => (id && unique.includes(id) ? null : id));
+      setSelectedIds((ids) => ids.filter((id) => !unique.includes(id)));
       try {
         await channel.postTurn({
           kind: "board-eraser",
@@ -214,7 +214,7 @@ export function useBoardSession({
         removed = prev.find((el) => el.id === elementId);
         return applyBoardTurn(prev, { kind: "board-remove", elementId });
       });
-      setSelectedId((id) => (id === elementId ? null : id));
+      setSelectedIds((ids) => ids.filter((id) => id !== elementId));
       try {
         await channel.postTurn({ kind: "board-remove", elementId });
       } catch (err) {
@@ -393,8 +393,8 @@ export function useBoardSession({
     setEraserSize,
     shapeKind,
     setShapeKind,
-    selectedId,
-    setSelectedId,
+    selectedIds,
+    setSelectedIds,
     livePoints,
     setLivePoints,
     commitStroke,

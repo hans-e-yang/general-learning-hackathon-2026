@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   ERASER_HIT_RADIUS,
+  findElementsInRect,
   findPenStrokesNearPoints,
   penStrokeHitsPoint,
 } from "./hitTest";
-import type { PenElement } from "@/contracts/board";
+import type { BoardElement, PenElement } from "@/contracts/board";
 
 const stroke = (id: string, points: { x: number; y: number }[]): PenElement => ({
   id,
@@ -73,3 +74,69 @@ describe("findPenStrokesNearPoints", () => {
     ]);
   });
 });
+
+describe("findElementsInRect", () => {
+  const elements: BoardElement[] = [
+    stroke("p1", [
+      { x: 0, y: 0 },
+      { x: 100, y: 0 },
+    ]),
+    {
+      id: "s1",
+      tool: "shape",
+      shape: "rect",
+      author: "student",
+      x: 200,
+      y: 200,
+      width: 40,
+      height: 40,
+      color: "#1a1a1a",
+      strokeWidth: 2.5,
+    },
+    {
+      id: "t1",
+      tool: "text",
+      author: "student",
+      x: 300,
+      y: 300,
+      source: "hi",
+      color: "#1a1a1a",
+      width: 180,
+      fontSize: 16,
+    },
+  ];
+
+  it("selects every drawable the marquee touches", () => {
+    expect(
+      findElementsInRect(elements, { x: -5, y: -5, width: 120, height: 20 }),
+    ).toEqual(["p1"]);
+  });
+
+  it("selects pen strokes crossing the rect without a vertex inside it", () => {
+    const crossing = stroke("p2", [
+      { x: -100, y: 50 },
+      { x: 100, y: 50 },
+    ]);
+    expect(
+      findElementsInRect([crossing], {
+        x: -10,
+        y: 40,
+        width: 20,
+        height: 20,
+      }),
+    ).toEqual(["p2"]);
+  });
+
+  it("selects multiple elements across pen, shape and text", () => {
+    expect(
+      findElementsInRect(elements, { x: -5, y: -5, width: 500, height: 400 }),
+    ).toEqual(["p1", "s1", "t1"]);
+  });
+
+  it("returns nothing for an empty rect in the gap", () => {
+    expect(
+      findElementsInRect(elements, { x: 120, y: 120, width: 20, height: 20 }),
+    ).toEqual([]);
+  });
+});
+

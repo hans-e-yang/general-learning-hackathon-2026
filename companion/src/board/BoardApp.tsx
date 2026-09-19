@@ -136,8 +136,8 @@ function BoardShell({ sessionUuid }: { sessionUuid: string }) {
     setEraserSize,
     shapeKind,
     setShapeKind,
-    selectedId,
-    setSelectedId,
+    selectedIds,
+    setSelectedIds,
     livePoints,
     setLivePoints,
     commitStroke,
@@ -146,8 +146,7 @@ function BoardShell({ sessionUuid }: { sessionUuid: string }) {
     commitText,
     removeElement,
     moveText,
-    movePen,
-    moveShape,
+    moveSelection,
     dismissTutorMarks,
   } = useMultiBoardSession({
     sessionUuid,
@@ -397,8 +396,8 @@ function BoardShell({ sessionUuid }: { sessionUuid: string }) {
             penWeight={penWeight}
             eraserSize={eraserSize}
             shapeKind={shapeKind}
-            selectedId={selectedId}
-            onSelectedIdChange={setSelectedId}
+            selectedIds={selectedIds}
+            onSelectedIdsChange={setSelectedIds}
             livePoints={livePoints}
             onLivePointsChange={setLivePoints}
             onStrokeCommit={commitStroke}
@@ -407,8 +406,7 @@ function BoardShell({ sessionUuid }: { sessionUuid: string }) {
             onTextCommit={commitText}
             onTextRemove={removeElement}
             onTextMove={moveText}
-            onPenMove={movePen}
-            onShapeMove={moveShape}
+            onMoveSelection={moveSelection}
           />
         </div>
       </BoardCarousel>
