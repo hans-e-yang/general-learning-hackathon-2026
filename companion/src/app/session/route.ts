@@ -1,28 +1,33 @@
-type SessionMode = "assignment" | "review";
+import { randomUUID } from "node:crypto";
+import { SessionInitRequestSchema } from "@/lib/contracts";
+import { freshSession, getOrCreate } from "@/lib/session/store";
 
-// Frozen cross-app contract (extension/README.md): POST /session → { uuid }.
-type SessionResponse = {
-  uuid: string;
-  mode: SessionMode;
-};
+export const runtime = "nodejs";
 
-const DEMO_SESSION_UUID = "00000000-0000-0000-0000-000000000000";
-
-function isSessionMode(value: unknown): value is SessionMode {
-  return value === "assignment" || value === "review";
-}
-
-function makeSession(uuid: string, mode: SessionMode): SessionResponse {
-  return { uuid, mode };
-}
-
-export async function GET() {
-  return Response.json(makeSession(DEMO_SESSION_UUID, "assignment"));
-}
-
-export async function POST(request: Request) {
-  const body = await request.json().catch(() => null);
-  const mode = isSessionMode(body?.mode) ? body.mode : "assignment";
-
-  return Response.json(makeSession(crypto.randomUUID(), mode), { status: 201 });
+export async function POST(req: Request): Promise<Response> {
+  let body: unknown = {};
+  if (req.headers.get("content-type")?.includes("application/json")) {
+    try {
+      body = await req.json();
+    } catch {
+      return Response.json({ error: "invalid json" }, { status: 400 });
+    }
+  }
+  const parsed = SessionInitRequestSchema.safeParse(body);
+  if (!parsed.success) {
+    return Response.json(
+      { error: "invalid session init", issues: parsed.error.issues },
+      { status: 400 }
+    );
+  }
+  const uuid = randomUUID();
+  getOrCreate(uuid, () => freshSession(uuid));
+  const url = new URL(req.url);
+  return Response.json(
+    {
+      uuid,
+      eventsUrl: `${url.protocol}//${url.host}/session/${uuid}/events`,
+    },
+    { status: 201 }
+  );
 }
