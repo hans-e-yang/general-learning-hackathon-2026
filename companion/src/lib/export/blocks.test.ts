@@ -12,6 +12,8 @@ function makeSession(partial: Partial<SessionState> = {}): SessionState {
     worksheet: [],
     drafts: {},
     threads: {},
+    context: [],
+    board: [],
     ghostCounts: {},
     ghostSummary: [],
     exportReady: false,

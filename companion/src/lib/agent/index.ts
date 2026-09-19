@@ -21,4 +21,4 @@ export function getAdapter(): LLMAdapter {
 export { fakeAdapter } from "./fake-adapter";
 export { opencodeAdapter, OpenCodeAdapter } from "./opencode-adapter";
 export { configureAgentLoop, processTurn, extractFromCapture, triageOnCapture, assessAllDrafts, assessDraft, watchOnCapture } from "./loop";
-export type { LLMAdapter, ScoutInput, ScoutVerdict, TriageInput, TriageVerdict, TutorInput, ExtractInput, ExtractedQuestion, WatchInput, WatchVerdict } from "./llm-adapter";
+export type { LLMAdapter, AnnotateInput, ScoutInput, ScoutVerdict, TriageInput, TriageVerdict, TutorInput, ExtractInput, ExtractedQuestion, WatchInput, WatchVerdict } from "./llm-adapter";

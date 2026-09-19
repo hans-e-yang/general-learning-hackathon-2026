@@ -143,6 +143,14 @@ paths:
                 - $ref: "#/components/schemas/AssessTurn"
                 - $ref: "#/components/schemas/AskTurn"
                 - $ref: "#/components/schemas/IdkTurn"
+                - $ref: "#/components/schemas/BoardPenTurn"
+                - $ref: "#/components/schemas/BoardShapeTurn"
+                - $ref: "#/components/schemas/BoardTextTurn"
+                - $ref: "#/components/schemas/BoardEraserTurn"
+                - $ref: "#/components/schemas/BoardRemoveTurn"
+                - $ref: "#/components/schemas/BoardTextMoveTurn"
+                - $ref: "#/components/schemas/BoardPenMoveTurn"
+                - $ref: "#/components/schemas/BoardShapeMoveTurn"
               discriminator:
                 propertyName: kind
                 mapping:
@@ -152,6 +160,14 @@ paths:
                   assess: "#/components/schemas/AssessTurn"
                   ask: "#/components/schemas/AskTurn"
                   idk: "#/components/schemas/IdkTurn"
+                  board-pen: "#/components/schemas/BoardPenTurn"
+                  board-shape: "#/components/schemas/BoardShapeTurn"
+                  board-text: "#/components/schemas/BoardTextTurn"
+                  board-eraser: "#/components/schemas/BoardEraserTurn"
+                  board-remove: "#/components/schemas/BoardRemoveTurn"
+                  board-text-move: "#/components/schemas/BoardTextMoveTurn"
+                  board-pen-move: "#/components/schemas/BoardPenMoveTurn"
+                  board-shape-move: "#/components/schemas/BoardShapeMoveTurn"
       responses:
         "202":
           description: Accepted
@@ -260,6 +276,194 @@ components:
         questionId:
           type: string
           description: Student-initiated escape hatch — smallest unblock on this question
+    BoardAuthor:
+      type: string
+      enum: [student, tutor]
+    ShapeKind:
+      type: string
+      enum: [rect, ellipse, line, triangle]
+    BoardPoint:
+      type: object
+      required: [x, y]
+      properties:
+        x:
+          type: number
+        y:
+          type: number
+    BoardPenElement:
+      type: object
+      required: [id, author, points]
+      properties:
+        id:
+          type: string
+        author:
+          $ref: "#/components/schemas/BoardAuthor"
+        points:
+          type: array
+          items:
+            $ref: "#/components/schemas/BoardPoint"
+        color:
+          type: string
+        strokeWidth:
+          type: number
+    BoardShapeElement:
+      type: object
+      required: [id, author, shape, x, y, width, height]
+      properties:
+        id:
+          type: string
+        author:
+          $ref: "#/components/schemas/BoardAuthor"
+        shape:
+          $ref: "#/components/schemas/ShapeKind"
+        x:
+          type: number
+        y:
+          type: number
+        width:
+          type: number
+        height:
+          type: number
+        color:
+          type: string
+        strokeWidth:
+          type: number
+    BoardTextElement:
+      type: object
+      required: [id, author, x, y, source]
+      properties:
+        id:
+          type: string
+        author:
+          $ref: "#/components/schemas/BoardAuthor"
+        x:
+          type: number
+        y:
+          type: number
+        source:
+          type: string
+        color:
+          type: string
+        width:
+          type: number
+        fontSize:
+          type: number
+        degraded:
+          type: boolean
+    BoardEraserMaskElement:
+      type: object
+      required: [id, author, points]
+      properties:
+        id:
+          type: string
+        author:
+          $ref: "#/components/schemas/BoardAuthor"
+        points:
+          type: array
+          items:
+            $ref: "#/components/schemas/BoardPoint"
+      description: Deprecated paint-mask eraser; ignored by the renderer
+    BoardElement:
+      oneOf:
+        - $ref: "#/components/schemas/BoardPenElement"
+        - $ref: "#/components/schemas/BoardShapeElement"
+        - $ref: "#/components/schemas/BoardTextElement"
+        - $ref: "#/components/schemas/BoardEraserMaskElement"
+      description: A fully-normalized canvas element (server → SSE)
+    BoardPenTurn:
+      type: object
+      required: [kind, element]
+      properties:
+        kind:
+          type: string
+          enum: ["board-pen"]
+        element:
+          $ref: "#/components/schemas/BoardPenElement"
+    BoardShapeTurn:
+      type: object
+      required: [kind, element]
+      properties:
+        kind:
+          type: string
+          enum: ["board-shape"]
+        element:
+          $ref: "#/components/schemas/BoardShapeElement"
+    BoardTextTurn:
+      type: object
+      required: [kind, element]
+      properties:
+        kind:
+          type: string
+          enum: ["board-text"]
+        element:
+          $ref: "#/components/schemas/BoardTextElement"
+    BoardEraserTurn:
+      type: object
+      required: [kind, elementIds]
+      properties:
+        kind:
+          type: string
+          enum: ["board-eraser"]
+        elementIds:
+          type: array
+          items:
+            type: string
+    BoardRemoveTurn:
+      type: object
+      required: [kind, elementId]
+      properties:
+        kind:
+          type: string
+          enum: ["board-remove"]
+        elementId:
+          type: string
+    BoardTextMoveTurn:
+      type: object
+      required: [kind, elementId, x, y]
+      properties:
+        kind:
+          type: string
+          enum: ["board-text-move"]
+        elementId:
+          type: string
+        x:
+          type: number
+        y:
+          type: number
+        width:
+          type: number
+        fontSize:
+          type: number
+    BoardPenMoveTurn:
+      type: object
+      required: [kind, elementId, dx, dy]
+      properties:
+        kind:
+          type: string
+          enum: ["board-pen-move"]
+        elementId:
+          type: string
+        dx:
+          type: number
+        dy:
+          type: number
+    BoardShapeMoveTurn:
+      type: object
+      required: [kind, elementId, x, y, width, height]
+      properties:
+        kind:
+          type: string
+          enum: ["board-shape-move"]
+        elementId:
+          type: string
+        x:
+          type: number
+        y:
+          type: number
+        width:
+          type: number
+        height:
+          type: number
     QuestionBlock:
       type: object
       required: [id, index, text, status]
@@ -348,6 +552,11 @@ components:
           type: object
           additionalProperties:
             type: string
+        board:
+          type: array
+          items:
+            $ref: "#/components/schemas/BoardElement"
+          description: Current shared-canvas elements (student + tutor marks), for resume
         ghostSummary:
           type: array
           items:
@@ -363,6 +572,11 @@ components:
         - $ref: "#/components/schemas/ExtractionUpdateEvent"
         - $ref: "#/components/schemas/AssessmentTickEvent"
         - $ref: "#/components/schemas/TutorTurnEvent"
+        - $ref: "#/components/schemas/BoardElementEvent"
+        - $ref: "#/components/schemas/BoardRemoveEvent"
+        - $ref: "#/components/schemas/BoardTextMoveEvent"
+        - $ref: "#/components/schemas/BoardPenMoveEvent"
+        - $ref: "#/components/schemas/BoardShapeMoveEvent"
         - $ref: "#/components/schemas/FlagEvent"
         - $ref: "#/components/schemas/ErrorEvent"
       discriminator:
@@ -374,6 +588,11 @@ components:
           extraction.update: "#/components/schemas/ExtractionUpdateEvent"
           assessment.tick: "#/components/schemas/AssessmentTickEvent"
           tutor.turn: "#/components/schemas/TutorTurnEvent"
+          board.element: "#/components/schemas/BoardElementEvent"
+          board.remove: "#/components/schemas/BoardRemoveEvent"
+          board.text-move: "#/components/schemas/BoardTextMoveEvent"
+          board.pen-move: "#/components/schemas/BoardPenMoveEvent"
+          board.shape-move: "#/components/schemas/BoardShapeMoveEvent"
           flag: "#/components/schemas/FlagEvent"
           error: "#/components/schemas/ErrorEvent"
     SnapshotEvent:
@@ -465,6 +684,91 @@ components:
           enum: ["tutor.turn"]
         data:
           $ref: "#/components/schemas/TutorTurn"
+    BoardElementEvent:
+      type: object
+      required: [type, data]
+      properties:
+        type:
+          type: string
+          enum: ["board.element"]
+        data:
+          type: object
+          required: [element]
+          properties:
+            element:
+              $ref: "#/components/schemas/BoardElement"
+    BoardRemoveEvent:
+      type: object
+      required: [type, data]
+      properties:
+        type:
+          type: string
+          enum: ["board.remove"]
+        data:
+          type: object
+          required: [elementId]
+          properties:
+            elementId:
+              type: string
+    BoardTextMoveEvent:
+      type: object
+      required: [type, data]
+      properties:
+        type:
+          type: string
+          enum: ["board.text-move"]
+        data:
+          type: object
+          required: [elementId, x, y]
+          properties:
+            elementId:
+              type: string
+            x:
+              type: number
+            y:
+              type: number
+            width:
+              type: number
+            fontSize:
+              type: number
+    BoardPenMoveEvent:
+      type: object
+      required: [type, data]
+      properties:
+        type:
+          type: string
+          enum: ["board.pen-move"]
+        data:
+          type: object
+          required: [elementId, dx, dy]
+          properties:
+            elementId:
+              type: string
+            dx:
+              type: number
+            dy:
+              type: number
+    BoardShapeMoveEvent:
+      type: object
+      required: [type, data]
+      properties:
+        type:
+          type: string
+          enum: ["board.shape-move"]
+        data:
+          type: object
+          required: [elementId, x, y, width, height]
+          properties:
+            elementId:
+              type: string
+            x:
+              type: number
+            y:
+              type: number
+            width:
+              type: number
+            height:
+              type: number
     WatchSeverity:
       type: string
       enum: [low, medium, high]

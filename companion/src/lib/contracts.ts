@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { type BoardAnnotationTurn, type BoardTurn } from "@/contracts/board";
 
 const hashSchema = z.string().regex(/^[0-9a-f]{16}$/, "average-hash must be 16 hex chars");
 const base64JpegSchema = z
@@ -66,6 +67,85 @@ export const WatchVerdictSchema = z.object({
 });
 export type WatchVerdict = z.infer<typeof WatchVerdictSchema>;
 
+export const BoardAuthorSchema = z.enum(["student", "tutor"]);
+export const ShapeKindSchema = z.enum(["rect", "ellipse", "line", "triangle"]);
+export const BoardPointSchema = z.object({ x: z.number(), y: z.number() });
+
+export const BoardElementSchema = z.discriminatedUnion("tool", [
+  z.object({
+    id: z.string(),
+    tool: z.literal("pen"),
+    author: BoardAuthorSchema,
+    points: z.array(BoardPointSchema),
+    color: z.string(),
+    strokeWidth: z.number(),
+  }),
+  z.object({
+    id: z.string(),
+    tool: z.literal("eraserMask"),
+    author: BoardAuthorSchema,
+    points: z.array(BoardPointSchema),
+  }),
+  z.object({
+    id: z.string(),
+    tool: z.literal("text"),
+    author: BoardAuthorSchema,
+    x: z.number(),
+    y: z.number(),
+    source: z.string(),
+    color: z.string(),
+    width: z.number(),
+    fontSize: z.number(),
+    degraded: z.boolean().optional(),
+  }),
+  z.object({
+    id: z.string(),
+    tool: z.literal("shape"),
+    shape: ShapeKindSchema,
+    author: BoardAuthorSchema,
+    x: z.number(),
+    y: z.number(),
+    width: z.number(),
+    height: z.number(),
+    color: z.string(),
+    strokeWidth: z.number(),
+  }),
+]);
+export type BoardElementWire = z.infer<typeof BoardElementSchema>;
+
+const boardPenElement = z.object({
+  id: z.string(),
+  tool: z.literal("pen").optional(),
+  author: BoardAuthorSchema,
+  points: z.array(BoardPointSchema).min(1),
+  color: z.string().optional(),
+  strokeWidth: z.number().optional(),
+});
+const boardShapeElement = z.object({
+  id: z.string(),
+  tool: z.literal("shape").optional(),
+  shape: ShapeKindSchema,
+  author: BoardAuthorSchema,
+  x: z.number(),
+  y: z.number(),
+  width: z.number(),
+  height: z.number(),
+  color: z.string().optional(),
+  strokeWidth: z.number().optional(),
+});
+const boardTextElement = z.object({
+  id: z.string(),
+  tool: z.literal("text").optional(),
+  author: BoardAuthorSchema,
+  x: z.number(),
+  y: z.number(),
+  source: z.string(),
+  color: z.string().optional(),
+  width: z.number().optional(),
+  fontSize: z.number().optional(),
+  degraded: z.boolean().optional(),
+});
+
 export const TurnRequestSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("setMode"), mode: ModeSchema }),
   z.object({ kind: z.literal("saveDraft"), questionId: z.string(), draft: z.string() }),
@@ -73,8 +153,47 @@ export const TurnRequestSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("assess"), questionId: z.string() }),
   z.object({ kind: z.literal("ask"), questionId: z.string(), message: z.string().min(1) }),
   z.object({ kind: z.literal("idk"), questionId: z.string() }),
+  z.object({ kind: z.literal("board-pen"), element: boardPenElement }),
+  z.object({ kind: z.literal("board-shape"), element: boardShapeElement }),
+  z.object({ kind: z.literal("board-text"), element: boardTextElement }),
+  z.object({ kind: z.literal("board-eraser"), elementIds: z.array(z.string()) }),
+  z.object({ kind: z.literal("board-remove"), elementId: z.string() }),
+  z.object({
+    kind: z.literal("board-text-move"),
+    elementId: z.string(),
+    x: z.number(),
+    y: z.number(),
+    width: z.number().optional(),
+    fontSize: z.number().optional(),
+  }),
+  z.object({
+    kind: z.literal("board-pen-move"),
+    elementId: z.string(),
+    dx: z.number(),
+    dy: z.number(),
+  }),
+  z.object({
+    kind: z.literal("board-shape-move"),
+    elementId: z.string(),
+    x: z.number(),
+    y: z.number(),
+    width: z.number(),
+    height: z.number(),
+  }),
 ]);
 export type TurnRequest = z.infer<typeof TurnRequestSchema>;
+
+/** Narrow a validated turn to a board mutation when its kind is a `board-*`. */
+export function asBoardTurn(turn: TurnRequest): BoardTurn | undefined {
+  return turn.kind.startsWith("board-") ? (turn as BoardTurn) : undefined;
+}
+
+/** The additive subset the agent may emit (pen / shape / text only). */
+export function asBoardAnnotationTurn(turn: BoardTurn): BoardAnnotationTurn | undefined {
+  return turn.kind === "board-pen" || turn.kind === "board-shape" || turn.kind === "board-text"
+    ? turn
+    : undefined;
+}
 
 export const GhostSummaryEntrySchema = z.object({
   ghostKey: z.string(),
@@ -120,6 +239,7 @@ export const SessionSnapshotSchema = z.object({
   ),
   worksheet: z.array(QuestionBlockSchema),
   drafts: z.record(z.string(), z.string()),
+  board: z.array(BoardElementSchema).optional(),
   ghostSummary: z.array(GhostSummaryEntrySchema),
   exportReady: z.boolean(),
 });
@@ -153,6 +273,38 @@ export const SseEventSchema = z.discriminatedUnion("type", [
     }),
   }),
   z.object({ type: z.literal("tutor.turn"), data: TutorTurnSchema }),
+  z.object({
+    type: z.literal("board.element"),
+    data: z.object({ element: BoardElementSchema }),
+  }),
+  z.object({
+    type: z.literal("board.remove"),
+    data: z.object({ elementId: z.string() }),
+  }),
+  z.object({
+    type: z.literal("board.text-move"),
+    data: z.object({
+      elementId: z.string(),
+      x: z.number(),
+      y: z.number(),
+      width: z.number().optional(),
+      fontSize: z.number().optional(),
+    }),
+  }),
+  z.object({
+    type: z.literal("board.pen-move"),
+    data: z.object({ elementId: z.string(), dx: z.number(), dy: z.number() }),
+  }),
+  z.object({
+    type: z.literal("board.shape-move"),
+    data: z.object({
+      elementId: z.string(),
+      x: z.number(),
+      y: z.number(),
+      width: z.number(),
+      height: z.number(),
+    }),
+  }),
   z.object({
     type: z.literal("flag"),
     data: z.object({

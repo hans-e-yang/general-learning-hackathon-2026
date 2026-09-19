@@ -1,12 +1,29 @@
-import type { TurnRequest, TriageVerdict, WatchVerdict } from "@/lib/contracts";
+import { randomUUID } from "node:crypto";
+import { applyBoardTurn } from "@/board/model";
+import type { BoardTurn } from "@/contracts/board";
+import {
+  asBoardAnnotationTurn,
+  asBoardTurn,
+  type TurnRequest,
+  type TriageVerdict,
+  type WatchVerdict,
+} from "@/lib/contracts";
 import { publish } from "@/lib/session/bus";
 import { get, withLock } from "@/lib/session/store";
-import { SILENT_THRESHOLD, type GhostSummaryEntry } from "@/lib/session/types";
+import {
+  SILENT_THRESHOLD,
+  type GhostSummaryEntry,
+  type SessionState,
+  type TurnContextInput,
+  type TurnMaterial,
+} from "@/lib/session/types";
 import { getAdapter } from "./index";
 import type {
+  AnnotateInput,
   ExtractInput,
   IdkInput,
   LLMAdapter,
+  PromptMessage,
   ScoutInput,
   TriageInput,
   TutorInput,
@@ -41,6 +58,134 @@ function depsOrDefault(): AgentLoopDeps {
 
 function findQuestion(state: NonNullable<ReturnType<typeof get>>, questionId: string) {
   return state.worksheet.find((q) => q.id === questionId);
+}
+
+function buildMaterial(
+  state: SessionState,
+  opts: {
+    questionId?: string;
+    captureHash?: string;
+    pageIndex?: number;
+    image?: string;
+  } = {}
+): TurnMaterial {
+  const capture =
+    (opts.captureHash
+      ? state.captures.find((c) => c.hash === opts.captureHash)
+      : undefined) ??
+    (state.captures.length > 0 ? state.captures[state.captures.length - 1] : undefined);
+  const q = opts.questionId ? findQuestion(state, opts.questionId) : undefined;
+  return {
+    questionId: opts.questionId,
+    questionText: q?.text,
+    captureId: capture?.captureId,
+    captureHash: opts.captureHash ?? capture?.hash,
+    pageIndex: opts.pageIndex ?? capture?.pageIndex,
+    image: opts.image ?? capture?.image,
+  };
+}
+
+function recordContext(
+  state: SessionState,
+  entry: {
+    questionId?: string;
+    prompt: PromptMessage[];
+    input: TurnContextInput;
+    material: TurnMaterial;
+    output: TutorTurn;
+  }
+): void {
+  state.context.push({ id: randomUUID(), at: Date.now(), ...entry });
+}
+
+/** Apply a student canvas turn to canonical board state and mirror it over SSE. */
+function applyBoardMutation(
+  state: SessionState,
+  turn: BoardTurn,
+  uuid: string,
+  publishEvent: typeof publish
+): void {
+  const before = state.board;
+  state.board = applyBoardTurn(before, turn);
+  switch (turn.kind) {
+    case "board-eraser":
+      for (const elementId of turn.elementIds) {
+        publishEvent(uuid, { type: "board.remove", data: { elementId } });
+      }
+      return;
+    case "board-remove":
+      publishEvent(uuid, { type: "board.remove", data: { elementId: turn.elementId } });
+      return;
+    case "board-text-move":
+      publishEvent(uuid, {
+        type: "board.text-move",
+        data: {
+          elementId: turn.elementId,
+          x: turn.x,
+          y: turn.y,
+          width: turn.width,
+          fontSize: turn.fontSize,
+        },
+      });
+      return;
+    case "board-pen-move":
+      publishEvent(uuid, {
+        type: "board.pen-move",
+        data: { elementId: turn.elementId, dx: turn.dx, dy: turn.dy },
+      });
+      return;
+    case "board-shape-move":
+      publishEvent(uuid, {
+        type: "board.shape-move",
+        data: {
+          elementId: turn.elementId,
+          x: turn.x,
+          y: turn.y,
+          width: turn.width,
+          height: turn.height,
+        },
+      });
+      return;
+    default: {
+      const element = state.board[state.board.length - 1];
+      if (state.board.length > before.length && element) {
+        publishEvent(uuid, { type: "board.element", data: { element } });
+      }
+    }
+  }
+}
+
+/** Best-effort: ask the agent for additive canvas marks after a tutor/idk turn. */
+async function annotateBoard(
+  state: SessionState,
+  uuid: string,
+  ctx: {
+    questionId?: string;
+    questionText?: string;
+    draftText?: string;
+    hint?: string;
+    message?: string;
+    captureHash?: string;
+  }
+): Promise<void> {
+  const { adapter, publishEvent } = depsOrDefault();
+  const input: AnnotateInput = { ...ctx, board: state.board };
+  let turns: BoardTurn[];
+  try {
+    turns = await adapter.annotate(input);
+  } catch {
+    return;
+  }
+  for (const raw of turns) {
+    const turn = asBoardAnnotationTurn(raw);
+    if (!turn) continue;
+    const before = state.board.length;
+    state.board = applyBoardTurn(state.board, turn);
+    const element = state.board[state.board.length - 1];
+    if (state.board.length > before && element) {
+      publishEvent(uuid, { type: "board.element", data: { element } });
+    }
+  }
 }
 
 function nextLevel(history: TutorTurn[], requestedLevel: number): number {
@@ -183,6 +328,7 @@ export async function watchOnCapture(
     if (silent || !q) return;
     const thread = state.threads[questionId] ?? [];
     const prevLevel = thread.length === 0 ? 0 : thread[thread.length - 1].level;
+    let prompt: PromptMessage[] = [];
     const tutorInput: TutorInput = {
       questionId,
       questionText: q.text,
@@ -190,11 +336,28 @@ export async function watchOnCapture(
       threadHistory: thread,
       currentLevel: prevLevel,
       captureHash,
+      onPrompt: (messages) => {
+        prompt = messages;
+      },
     };
     const tutorTurn = await adapter.tutor(tutorInput);
+    recordContext(state, {
+      questionId,
+      prompt,
+      input: { kind: "watch", captureHash, pageIndex },
+      material: buildMaterial(state, { questionId, captureHash, pageIndex, image }),
+      output: tutorTurn,
+    });
     thread.push(tutorTurn);
     state.threads[questionId] = thread;
     publishEvent(uuid, { type: "tutor.turn", data: tutorTurn });
+    await annotateBoard(state, uuid, {
+      questionId,
+      questionText: q.text,
+      draftText: draft,
+      hint: tutorTurn.hint,
+      captureHash,
+    });
   });
   return verdict;
 }
@@ -238,6 +401,17 @@ export async function assessAllDrafts(uuid: string, captureHint?: { captureHash:
 }
 
 export async function processTurn(uuid: string, turn: TurnRequest): Promise<void> {
+  const boardTurn = asBoardTurn(turn);
+  if (boardTurn) {
+    await withLock(uuid, async () => {
+      const state = get(uuid);
+      if (!state) return;
+      const { publishEvent } = depsOrDefault();
+      applyBoardMutation(state, boardTurn, uuid, publishEvent);
+    });
+    return;
+  }
+
   if (turn.kind === "saveDraft") {
     await withLock(uuid, async () => {
       const state = get(uuid);
@@ -263,6 +437,7 @@ export async function processTurn(uuid: string, turn: TurnRequest): Promise<void
         const thread = state.threads[turn.questionId] ?? [];
         const q = findQuestion(state, turn.questionId);
         const target = nextLevel(thread, 0);
+        let prompt: PromptMessage[] = [];
         const input: TutorInput = {
           questionId: turn.questionId,
           questionText: q?.text ?? "(question text unavailable)",
@@ -273,11 +448,28 @@ export async function processTurn(uuid: string, turn: TurnRequest): Promise<void
             state.captures.length > 0
               ? state.captures[state.captures.length - 1].hash
               : undefined,
+          onPrompt: (messages) => {
+            prompt = messages;
+          },
         };
         const tutorTurn = await adapter.tutor(input);
+        recordContext(state, {
+          questionId: turn.questionId,
+          prompt,
+          input: { kind: "turn", turn },
+          material: buildMaterial(state, { questionId: turn.questionId }),
+          output: tutorTurn,
+        });
         thread.push(tutorTurn);
         state.threads[turn.questionId] = thread;
         publishEvent(uuid, { type: "tutor.turn", data: tutorTurn });
+        await annotateBoard(state, uuid, {
+          questionId: turn.questionId,
+          questionText: q?.text,
+          draftText: state.drafts[turn.questionId],
+          hint: tutorTurn.hint,
+          captureHash: input.captureHash,
+        });
 
         const draft = state.drafts[turn.questionId] ?? "";
         const verdict = await adapter.scout({
@@ -322,6 +514,7 @@ export async function processTurn(uuid: string, turn: TurnRequest): Promise<void
         });
         const prevLevel = thread.length === 0 ? 0 : thread[thread.length - 1].level;
         if (!verdict.escalate || prevLevel >= MAX_LEVEL) return;
+        let prompt: PromptMessage[] = [];
         const tutorTurn = await adapter.tutor({
           questionId: turn.questionId,
           questionText: q?.text ?? "(question text unavailable)",
@@ -329,10 +522,31 @@ export async function processTurn(uuid: string, turn: TurnRequest): Promise<void
           threadHistory: thread,
           currentLevel: nextLevel(thread, 0),
           captureHash: lastCapture?.hash,
+          onPrompt: (messages) => {
+            prompt = messages;
+          },
+        });
+        recordContext(state, {
+          questionId: turn.questionId,
+          prompt,
+          input: { kind: "turn", turn },
+          material: buildMaterial(state, {
+            questionId: turn.questionId,
+            captureHash: lastCapture?.hash,
+            pageIndex: lastCapture?.pageIndex,
+          }),
+          output: tutorTurn,
         });
         thread.push(tutorTurn);
         state.threads[turn.questionId] = thread;
         publishEvent(uuid, { type: "tutor.turn", data: tutorTurn });
+        await annotateBoard(state, uuid, {
+          questionId: turn.questionId,
+          questionText: q?.text,
+          draftText: draft,
+          hint: tutorTurn.hint,
+          captureHash: lastCapture?.hash,
+        });
         return;
       }
       case "ask": {
@@ -340,6 +554,7 @@ export async function processTurn(uuid: string, turn: TurnRequest): Promise<void
         const thread = state.threads[turn.questionId] ?? [];
         const q = findQuestion(state, turn.questionId);
         const target = nextLevel(thread, 0);
+        let prompt: PromptMessage[] = [];
         const input: TutorInput = {
           questionId: turn.questionId,
           questionText: q?.text ?? "(question text unavailable)",
@@ -351,26 +566,61 @@ export async function processTurn(uuid: string, turn: TurnRequest): Promise<void
             state.captures.length > 0
               ? state.captures[state.captures.length - 1].hash
               : undefined,
+          onPrompt: (messages) => {
+            prompt = messages;
+          },
         };
         const tutorTurn = await adapter.tutor(input);
+        recordContext(state, {
+          questionId: turn.questionId,
+          prompt,
+          input: { kind: "turn", turn },
+          material: buildMaterial(state, { questionId: turn.questionId }),
+          output: tutorTurn,
+        });
         thread.push(tutorTurn);
         state.threads[turn.questionId] = thread;
         publishEvent(uuid, { type: "tutor.turn", data: tutorTurn });
+        await annotateBoard(state, uuid, {
+          questionId: turn.questionId,
+          questionText: q?.text,
+          draftText: state.drafts[turn.questionId],
+          hint: tutorTurn.hint,
+          message: turn.message,
+          captureHash: input.captureHash,
+        });
         return;
       }
       case "idk": {
         const { adapter, publishEvent } = depsOrDefault();
         const thread = state.threads[turn.questionId] ?? [];
         const q = findQuestion(state, turn.questionId);
+        let prompt: PromptMessage[] = [];
         const input: IdkInput = {
           questionId: turn.questionId,
           questionText: q?.text ?? "(question text unavailable)",
           draftText: state.drafts[turn.questionId],
+          onPrompt: (messages) => {
+            prompt = messages;
+          },
         };
         const tutorTurn = await adapter.idk(input);
+        recordContext(state, {
+          questionId: turn.questionId,
+          prompt,
+          input: { kind: "turn", turn },
+          material: buildMaterial(state, { questionId: turn.questionId }),
+          output: tutorTurn,
+        });
         thread.push(tutorTurn);
         state.threads[turn.questionId] = thread;
         publishEvent(uuid, { type: "tutor.turn", data: tutorTurn });
+        await annotateBoard(state, uuid, {
+          questionId: turn.questionId,
+          questionText: q?.text,
+          draftText: state.drafts[turn.questionId],
+          hint: tutorTurn.hint,
+        });
         return;
       }
     }

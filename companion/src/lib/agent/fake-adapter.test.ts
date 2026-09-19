@@ -280,6 +280,29 @@ describe("fake-adapter/tutor", () => {
   });
 });
 
+describe("fake-adapter/annotate", () => {
+  it("returns a tutor-authored text mark for a scene", async () => {
+    const turns = await fakeAdapter.annotate({
+      questionId: "q1",
+      questionText: "Why does sin(x)/x approach 1?",
+      board: [],
+    });
+    expect(turns).toHaveLength(1);
+    expect(turns[0].kind).toBe("board-text");
+    expect(turns[0].element.author).toBe("tutor");
+  });
+
+  it("is deterministic for the same scene", async () => {
+    const a = await fakeAdapter.annotate({ questionId: "q1", hint: "h", board: [] });
+    const b = await fakeAdapter.annotate({ questionId: "q1", hint: "h", board: [] });
+    expect(a).toEqual(b);
+  });
+
+  it("returns no marks for an empty canvas with no question or hint", async () => {
+    expect(await fakeAdapter.annotate({ board: [] })).toEqual([]);
+  });
+});
+
 describe("fake-adapter identity", () => {
   it("has name 'fake'", () => {
     expect(fakeAdapter.name).toBe("fake");

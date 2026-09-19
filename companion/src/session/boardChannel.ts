@@ -76,34 +76,31 @@ function createLiveChannel(
     },
     subscribe(onEvent) {
       const source = new EventSource(eventsUrl);
-      const handle = (msg: MessageEvent<string>) => {
-        try {
-          const data = JSON.parse(msg.data) as BoardSseEvent;
-          if (
-            data?.type === "board.element" ||
-            data?.type === "board.remove" ||
-            data?.type === "board.text-move" ||
-            data?.type === "board.pen-move" ||
-            data?.type === "board.shape-move"
-          ) {
-            onEvent(data);
+      // Lane B frames each board event as `event: board.*` + `data: <payload>`.
+      // Reattach the type from the SSE event name before handing it to the UI.
+      const names = [
+        "board.element",
+        "board.remove",
+        "board.text-move",
+        "board.pen-move",
+        "board.shape-move",
+      ] as const;
+      const handlers = names.map((name) => {
+        const handler = (msg: MessageEvent<string>) => {
+          try {
+            const payload = JSON.parse(msg.data) as Record<string, unknown>;
+            onEvent({ type: name, ...payload } as BoardSseEvent);
+          } catch {
+            // Ignore malformed heartbeats / non-JSON frames.
           }
-        } catch {
-          // Ignore malformed heartbeats / non-JSON frames.
-        }
-      };
-      source.onmessage = handle;
-      source.addEventListener("board.element", handle as EventListener);
-      source.addEventListener("board.remove", handle as EventListener);
-      source.addEventListener("board.text-move", handle as EventListener);
-      source.addEventListener("board.pen-move", handle as EventListener);
-      source.addEventListener("board.shape-move", handle as EventListener);
+        };
+        source.addEventListener(name, handler as EventListener);
+        return { name, handler };
+      });
       return () => {
-        source.removeEventListener("board.element", handle as EventListener);
-        source.removeEventListener("board.remove", handle as EventListener);
-        source.removeEventListener("board.text-move", handle as EventListener);
-        source.removeEventListener("board.pen-move", handle as EventListener);
-        source.removeEventListener("board.shape-move", handle as EventListener);
+        for (const { name, handler } of handlers) {
+          source.removeEventListener(name, handler as EventListener);
+        }
         source.close();
       };
     },

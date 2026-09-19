@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
+import type { BoardAnnotationTurn } from "@/contracts/board";
 import {
   AssessmentStatusSchema,
   HintEscalationSchema,
+  ShapeKindSchema,
   TriageVerdictSchema,
   WatchVerdictSchema,
   type ExtractedQuestion,
@@ -10,9 +12,11 @@ import {
 } from "@/lib/contracts";
 import { looksLikeFinalAnswer } from "./answer-guard";
 import type {
+  AnnotateInput,
   ExtractInput,
   IdkInput,
   LLMAdapter,
+  PromptMessage,
   ScoutInput,
   ScoutVerdict,
   TriageInput,
@@ -27,6 +31,11 @@ const ZEN_BASE_URL = "https://opencode.ai/zen/v1";
 const USER_AGENT = "circlr-companion/0.1";
 const DEFAULT_TEXT_MODEL = "deepseek-v4.1-flash";
 const DEFAULT_VISION_MODEL = "deepseek-v4-flash-vision-exp";
+
+// The vision model is a reasoning model: it spends completion tokens on hidden
+// reasoning before emitting any content. A budget that is too small yields
+// finish_reason=length with empty content, so vision calls need generous room.
+const VISION_MAX_TOKENS = 6000;
 
 const MIN_LEVEL = 0;
 const MAX_LEVEL = 3;
@@ -77,6 +86,16 @@ function userContent(instruction: string, image?: string): string | ContentPart[
   ];
 }
 
+function toPromptMessages(messages: ChatMessage[]): PromptMessage[] {
+  return messages.map((m) => ({
+    role: m.role,
+    content:
+      typeof m.content === "string"
+        ? m.content
+        : m.content.map((part) => (part.type === "text" ? part.text : "[image]")).join("\n"),
+  }));
+}
+
 function jsonSlices(raw: string): string[] {
   const slices: string[] = [];
   const objStart = raw.indexOf("{");
@@ -124,6 +143,33 @@ const IdkResultSchema = z.object({
   hint: z.string().min(1),
 });
 
+const AnnotateResultSchema = z.object({
+  annotations: z
+    .array(
+      z.discriminatedUnion("tool", [
+        z.object({
+          tool: z.literal("text"),
+          x: z.number(),
+          y: z.number(),
+          source: z.string().min(1),
+        }),
+        z.object({
+          tool: z.literal("shape"),
+          shape: ShapeKindSchema,
+          x: z.number(),
+          y: z.number(),
+          width: z.number(),
+          height: z.number(),
+        }),
+        z.object({
+          tool: z.literal("pen"),
+          points: z.array(z.object({ x: z.number(), y: z.number() })).min(2),
+        }),
+      ])
+    )
+    .max(3),
+});
+
 const EXTRACT_SYSTEM = [
   "You extract exam questions from photos of student worksheets.",
   'Respond with strict JSON: {"questions":[{"text":"..."}]}.',
@@ -149,6 +195,14 @@ const TUTOR_SYSTEM = [
   "Follow the hint ladder: level 0 is the smallest nudge; level 3 is the most explicit guidance that still leaves the final step to the student.",
   'Respond with strict JSON: {"hint":"...","level":0-3,"escalation":"up|same|down"}.',
   "escalation is up when the student is stuck and needs more help than the current level, down when they reason well, same otherwise.",
+].join(" ");
+
+const ANNOTATE_SYSTEM = [
+  "You mark a shared whiteboard beside a student working on a question.",
+  "Propose at most 3 small additive annotations (a circle, an arrow, or a very short note) that point attention at the step to reconsider.",
+  "Never erase, remove, move, or cover the student's work, and never write the final answer or a numeric result.",
+  'Coordinates are in an 800x1200 canvas. Respond with strict JSON: {"annotations":[{"tool":"text","x":0,"y":0,"source":"short note"},{"tool":"shape","shape":"rect|ellipse|line|triangle","x":0,"y":0,"width":0,"height":0},{"tool":"pen","points":[{"x":0,"y":0}]}]}.',
+  "Return an empty annotations array when no mark would help.",
 ].join(" ");
 
 const IDK_SYSTEM = [
@@ -277,7 +331,7 @@ export class OpenCodeAdapter implements LLMAdapter {
           ),
         },
       ],
-      { model: this.visionModel(), maxTokens: 1400 },
+      { model: this.visionModel(), maxTokens: VISION_MAX_TOKENS },
       ExtractResultSchema
     );
     return data.questions.map((q, index) => ({
@@ -315,7 +369,7 @@ export class OpenCodeAdapter implements LLMAdapter {
         { role: "system", content: TRIAGE_SYSTEM },
         { role: "user", content: userContent(instruction, input.image) },
       ],
-      { model: this.visionModel(), maxTokens: 500 },
+      { model: this.visionModel(), maxTokens: VISION_MAX_TOKENS },
       TriageVerdictSchema
     );
   }
@@ -335,14 +389,16 @@ export class OpenCodeAdapter implements LLMAdapter {
     ];
     if (input.message) lines.push(`Student asks:\n${input.message}`);
 
+    const messages: ChatMessage[] = [
+      { role: "system", content: TUTOR_SYSTEM },
+      { role: "user", content: lines.join("\n\n") },
+    ];
     const data = await this.jsonCall(
-      [
-        { role: "system", content: TUTOR_SYSTEM },
-        { role: "user", content: lines.join("\n\n") },
-      ],
+      messages,
       { model: this.textModel(), maxTokens: 900 },
       TutorResultSchema
     );
+    input.onPrompt?.(toPromptMessages(messages));
     const hint = data.hint.trim();
     if (looksLikeFinalAnswer(hint)) {
       throw new Error("OpenCodeAdapter invariant violated: tutor hint looks like a final answer");
@@ -374,21 +430,23 @@ export class OpenCodeAdapter implements LLMAdapter {
         { role: "system", content: WATCH_SYSTEM },
         { role: "user", content: userContent(instruction, input.image) },
       ],
-      { model: this.visionModel(), maxTokens: 600 },
+      { model: this.visionModel(), maxTokens: VISION_MAX_TOKENS },
       WatchVerdictSchema
     );
   }
 
   async idk(input: IdkInput): Promise<TutorTurn> {
     const question = (input.questionText ?? "").trim() || "(question text unavailable)";
+    const messages: ChatMessage[] = [
+      { role: "system", content: IDK_SYSTEM },
+      { role: "user", content: `Question:\n${question}` },
+    ];
     const data = await this.jsonCall(
-      [
-        { role: "system", content: IDK_SYSTEM },
-        { role: "user", content: `Question:\n${question}` },
-      ],
+      messages,
       { model: this.textModel(), maxTokens: 600 },
       IdkResultSchema
     );
+    input.onPrompt?.(toPromptMessages(messages));
     const hint = data.hint.trim();
     if (looksLikeFinalAnswer(hint)) {
       throw new Error("OpenCodeAdapter invariant violated: idk hint looks like a final answer");
@@ -399,6 +457,65 @@ export class OpenCodeAdapter implements LLMAdapter {
       level: 0,
       escalation: "same",
     };
+  }
+
+  async annotate(input: AnnotateInput): Promise<BoardAnnotationTurn[]> {
+    const boardSummary =
+      input.board.length > 0
+        ? input.board.map((el) => `${el.tool}:${el.id}`).join(", ")
+        : "(empty canvas)";
+    const lines = [
+      `Question:\n${(input.questionText ?? "").trim() || "(none)"}`,
+      `Student draft:\n${(input.draftText ?? "").trim() || "(no attempt yet)"}`,
+    ];
+    if (input.hint) lines.push(`Tutor hint:\n${input.hint}`);
+    if (input.message) lines.push(`Student asks:\n${input.message}`);
+    lines.push(`Canvas elements:\n${boardSummary}`);
+
+    const messages: ChatMessage[] = [
+      { role: "system", content: ANNOTATE_SYSTEM },
+      { role: "user", content: lines.join("\n\n") },
+    ];
+    const data = await this.jsonCall(
+      messages,
+      { model: this.textModel(), maxTokens: 500 },
+      AnnotateResultSchema
+    );
+    input.onPrompt?.(toPromptMessages(messages));
+
+    return data.annotations.map((annotation): BoardAnnotationTurn => {
+      const id = `tutor-${annotation.tool}-${randomUUID()}`;
+      if (annotation.tool === "text") {
+        return {
+          kind: "board-text",
+          element: {
+            id,
+            author: "tutor",
+            x: annotation.x,
+            y: annotation.y,
+            source: annotation.source,
+          },
+        };
+      }
+      if (annotation.tool === "shape") {
+        return {
+          kind: "board-shape",
+          element: {
+            id,
+            author: "tutor",
+            shape: annotation.shape,
+            x: annotation.x,
+            y: annotation.y,
+            width: annotation.width,
+            height: annotation.height,
+          },
+        };
+      }
+      return {
+        kind: "board-pen",
+        element: { id, author: "tutor", points: annotation.points },
+      };
+    });
   }
 }
 

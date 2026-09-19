@@ -27,7 +27,8 @@ export async function POST(
     uuid,
     parsed.data.hash,
     parsed.data.pageIndex,
-    parsed.data.timestamp
+    parsed.data.timestamp,
+    parsed.data.image
   );
   if (!deduped) {
     publish(uuid, {

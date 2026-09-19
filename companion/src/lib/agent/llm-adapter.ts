@@ -1,3 +1,4 @@
+import type { BoardAnnotationTurn, BoardElement } from "@/contracts/board";
 import type {
   ExtractedQuestion,
   ScoutVerdict,
@@ -34,6 +35,13 @@ export interface ExtractInput {
   image?: string;
 }
 
+export interface PromptMessage {
+  role: "system" | "user" | "assistant";
+  content: string;
+}
+
+export type PromptSink = (messages: PromptMessage[]) => void;
+
 export interface TutorInput {
   questionId: string;
   questionText: string;
@@ -42,6 +50,7 @@ export interface TutorInput {
   threadHistory: TutorTurn[];
   currentLevel: number;
   captureHash?: string;
+  onPrompt?: PromptSink;
 }
 
 export interface WatchInput {
@@ -57,6 +66,7 @@ export interface IdkInput {
   questionId: string;
   questionText: string;
   draftText?: string;
+  onPrompt?: PromptSink;
 }
 
 export interface TriageInput {
@@ -64,6 +74,18 @@ export interface TriageInput {
   pageIndex: number;
   image?: string;
   contextSummary?: string;
+}
+
+export interface AnnotateInput {
+  questionId?: string;
+  questionText?: string;
+  draftText?: string;
+  hint?: string;
+  message?: string;
+  captureHash?: string;
+  /** Current canvas elements, so the agent can place marks relative to the student's work. */
+  board: BoardElement[];
+  onPrompt?: PromptSink;
 }
 
 export interface LLMAdapter {
@@ -74,4 +96,6 @@ export interface LLMAdapter {
   tutor(input: TutorInput): Promise<TutorTurn>;
   watch(input: WatchInput): Promise<WatchVerdict>;
   idk(input: IdkInput): Promise<TutorTurn>;
+  /** Additive Tutor marks on the shared canvas (never erase/remove/move student work). */
+  annotate(input: AnnotateInput): Promise<BoardAnnotationTurn[]>;
 }

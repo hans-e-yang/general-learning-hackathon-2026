@@ -278,6 +278,52 @@ describe("opencode-adapter/scout + watch + idk", () => {
   });
 });
 
+describe("opencode-adapter/annotate (canvas tools)", () => {
+  it("maps model annotations to tutor-authored board turns", async () => {
+    fetchMock.mockResolvedValueOnce(
+      completion({
+        annotations: [
+          { tool: "shape", shape: "ellipse", x: 10, y: 20, width: 30, height: 40 },
+          { tool: "text", x: 1, y: 2, source: "re-check this step" },
+        ],
+      })
+    );
+
+    const turns = await adapter().annotate({
+      questionId: "q1",
+      questionText: "x?",
+      board: [],
+    });
+
+    expect(turns).toHaveLength(2);
+    expect(turns[0]).toMatchObject({
+      kind: "board-shape",
+      element: { author: "tutor", shape: "ellipse", width: 30, height: 40 },
+    });
+    expect(turns[1]).toMatchObject({
+      kind: "board-text",
+      element: { author: "tutor", source: "re-check this step" },
+    });
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    expect(body.model).toBe("test-text");
+  });
+
+  it("returns an empty list when the model proposes no marks", async () => {
+    fetchMock.mockResolvedValueOnce(completion({ annotations: [] }));
+    const turns = await adapter().annotate({ questionText: "x?", board: [] });
+    expect(turns).toEqual([]);
+  });
+
+  it("rejects a malformed annotation payload", async () => {
+    fetchMock.mockResolvedValueOnce(
+      completion({ annotations: [{ tool: "shape", x: 1 }] })
+    );
+    await expect(adapter().annotate({ questionText: "x?", board: [] })).rejects.toThrow(
+      /malformed output/
+    );
+  });
+});
+
 describe("opencode-adapter/triage (#28)", () => {
   it("sends the capture image to the vision model and validates the verdict", async () => {
     fetchMock.mockResolvedValueOnce(

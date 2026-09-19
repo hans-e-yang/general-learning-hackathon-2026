@@ -159,6 +159,12 @@ export type BoardTurn =
   | BoardPenMoveTurn
   | BoardShapeMoveTurn;
 
+/**
+ * The only canvas operations the agent (Tutor) may emit: additive marks.
+ * The Tutor never erases, removes, or repositions the student's work.
+ */
+export type BoardAnnotationTurn = BoardPenTurn | BoardShapeTurn | BoardTextTurn;
+
 export type BoardElementEvent = {
   type: "board.element";
   element: BoardElement;

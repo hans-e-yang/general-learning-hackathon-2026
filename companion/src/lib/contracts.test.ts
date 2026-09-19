@@ -108,6 +108,77 @@ describe("contracts: TurnRequest", () => {
   });
 });
 
+describe("contracts: board turns", () => {
+  it("accepts a board-pen turn (color/strokeWidth optional)", () => {
+    const r = TurnRequestSchema.safeParse({
+      kind: "board-pen",
+      element: {
+        id: "pen-1",
+        author: "student",
+        points: [
+          { x: 0, y: 0 },
+          { x: 4, y: 4 },
+        ],
+      },
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it("accepts a board-remove turn", () => {
+    expect(TurnRequestSchema.safeParse({ kind: "board-remove", elementId: "pen-1" }).success).toBe(
+      true
+    );
+  });
+
+  it("rejects a board-shape turn missing its dimensions", () => {
+    const r = TurnRequestSchema.safeParse({
+      kind: "board-shape",
+      element: { id: "s1", author: "student", shape: "rect", x: 0, y: 0 },
+    });
+    expect(r.success).toBe(false);
+  });
+
+  it("rejects an unknown board author", () => {
+    const r = TurnRequestSchema.safeParse({
+      kind: "board-pen",
+      element: { id: "p", author: "robot", points: [{ x: 0, y: 0 }] },
+    });
+    expect(r.success).toBe(false);
+  });
+});
+
+describe("contracts: board SSE events", () => {
+  it("accepts a board.element event", () => {
+    const ev = {
+      type: "board.element",
+      data: {
+        element: {
+          id: "e1",
+          tool: "text",
+          author: "tutor",
+          x: 0,
+          y: 0,
+          source: "look here",
+          color: "#b85c38",
+          width: 180,
+          fontSize: 16,
+        },
+      },
+    };
+    expect(safeParseSseEvent(ev).success).toBe(true);
+  });
+
+  it("accepts a board.remove event", () => {
+    expect(safeParseSseEvent({ type: "board.remove", data: { elementId: "e1" } }).success).toBe(
+      true
+    );
+  });
+
+  it("rejects a board.element event without an element", () => {
+    expect(safeParseSseEvent({ type: "board.element", data: {} }).success).toBe(false);
+  });
+});
+
 describe("contracts: ScoutVerdict", () => {
   it("requires the escalate gate", () => {
     expect(
@@ -223,6 +294,12 @@ describe("contracts: openapi.yaml", () => {
       "ExtractionUpdateEvent",
       "AssessmentTickEvent",
       "TutorTurnEvent",
+      "BoardElementEvent",
+      "BoardRemoveEvent",
+      "BoardTextMoveEvent",
+      "BoardPenMoveEvent",
+      "BoardShapeMoveEvent",
+      "BoardElement",
       "ErrorEvent",
     ]) {
       expect(schemas).toHaveProperty(name);
@@ -240,6 +317,18 @@ describe("contracts: openapi.yaml", () => {
     );
     const turn = spec.paths as { "/session/{uuid}/turn": { post: unknown } };
     expect(turn["/session/{uuid}/turn"].post).toBeDefined();
+  });
+
+  it("declares the board turns and the board.element mapping", () => {
+    const schemas = (spec.components as { schemas: Record<string, unknown> }).schemas;
+    expect(schemas).toHaveProperty("BoardPenTurn");
+    expect(schemas).toHaveProperty("BoardShapeMoveTurn");
+    const sse = schemas.SseEvent as {
+      discriminator: { mapping: Record<string, string> };
+    };
+    expect(sse.discriminator.mapping["board.element"]).toBe(
+      "#/components/schemas/BoardElementEvent"
+    );
   });
 
   it("never advertises a final-answer field on TutorTurn", () => {

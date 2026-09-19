@@ -1,11 +1,14 @@
+import type { BoardAnnotationTurn } from "@/contracts/board";
 import { looksLikeFinalAnswer } from "./answer-guard";
 import type {
+  AnnotateInput,
   AssessmentStatus,
   ExtractInput,
   ExtractedQuestion,
   HintEscalation,
   IdkInput,
   LLMAdapter,
+  PromptMessage,
   ScoutInput,
   ScoutVerdict,
   TriageInput,
@@ -23,6 +26,17 @@ const HINT_LADDER = [
   "Try working the problem from the definition. What does each symbol mean?",
   "Walk me through each step. Do not yet write your final sentence.",
 ];
+
+const TUTOR_SYSTEM =
+  "You are a Socratic tutor inside a study companion. (fake adapter)";
+const IDK_SYSTEM = 'A student pressed "I don\'t know". (fake adapter)';
+
+function promptPair(system: string, user: string): PromptMessage[] {
+  return [
+    { role: "system", content: system },
+    { role: "user", content: user },
+  ];
+}
 
 const MIN_LEVEL = 0;
 const MAX_LEVEL = 3;
@@ -163,6 +177,20 @@ export class FakeAdapter implements LLMAdapter {
       throw new Error("FakeAdapter invariant violated: hint looks like a final answer");
     }
 
+    const history =
+      input.threadHistory
+        .slice(-4)
+        .map((t) => `[level ${t.level}, ${t.escalation}] ${t.hint}`)
+        .join("\n") || "(no prior turns)";
+    const lines = [
+      `Question:\n${input.questionText}`,
+      `Student draft:\n${draft || "(no attempt yet)"}`,
+      `Current hint level: ${level}`,
+      `Prior turns:\n${history}`,
+    ];
+    if (message.length > 0) lines.push(`Student asks:\n${message}`);
+    input.onPrompt?.(promptPair(TUTOR_SYSTEM, lines.join("\n\n")));
+
     return {
       questionId: input.questionId,
       hint,
@@ -195,12 +223,31 @@ export class FakeAdapter implements LLMAdapter {
     if (looksLikeFinalAnswer(hint)) {
       throw new Error("FakeAdapter invariant violated: idk hint looks like a final answer");
     }
+    input.onPrompt?.(promptPair(IDK_SYSTEM, `Question:\n${q || "(question text unavailable)"}`));
     return {
       questionId: input.questionId,
       hint,
       level: 0,
       escalation: "same",
     };
+  }
+
+  async annotate(input: AnnotateInput): Promise<BoardAnnotationTurn[]> {
+    const hasScene = Boolean(input.questionText || input.hint || input.board.length > 0);
+    if (!hasScene) return [];
+    const id = `tutor-note-${hash32(`${input.questionId ?? ""}:${input.hint ?? ""}`)}`;
+    return [
+      {
+        kind: "board-text",
+        element: {
+          id,
+          author: "tutor",
+          x: 32,
+          y: 32,
+          source: "Check this step.",
+        },
+      },
+    ];
   }
 }
 

@@ -72,6 +72,8 @@ describe("/session/:uuid/material POST", () => {
     expect(body.accepted).toBe(true);
     expect(body.deduped).toBe(false);
     expect(body.captureId).toMatch(/^[0-9a-f-]{36}$/);
+    const stored = getOrCreate(s.uuid);
+    expect(stored.captures[0].image).toBe(JPEG_B64);
   });
 
   it("rejects malformed JSON with 400", async () => {
@@ -310,6 +312,32 @@ describe("/session/:uuid/turn POST", () => {
       { params: Promise.resolve({ uuid: s.uuid }) }
     );
     expect(res.status).toBe(400);
+  });
+
+  it("applies a board turn to the canvas and exposes it in the snapshot", async () => {
+    const s = (await (
+      await startSession(req("http://test.local/session", { method: "POST" }))
+    ).json()) as { uuid: string };
+    getOrCreate(s.uuid);
+    const res = await postTurn(
+      req(`http://test.local/session/${s.uuid}/turn`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          kind: "board-text",
+          element: { id: "t1", author: "student", x: 1, y: 2, source: "hello" },
+        }),
+      }),
+      { params: Promise.resolve({ uuid: s.uuid }) }
+    );
+    expect(res.status).toBe(202);
+
+    const snapRes = await getSession(req(`http://test.local/session/${s.uuid}`), {
+      params: Promise.resolve({ uuid: s.uuid }),
+    });
+    const snap = (await snapRes.json()) as { board: Array<{ id: string }> };
+    expect(snap.board).toHaveLength(1);
+    expect(snap.board[0].id).toBe("t1");
   });
 });
 
@@ -701,6 +729,8 @@ describe("/session/:uuid/export GET (#17)", () => {
           },
         ],
       },
+      context: [],
+      board: [],
       ghostCounts: {},
       ghostSummary: [],
       exportReady: false,
@@ -742,6 +772,8 @@ describe("/session/:uuid GET (#20 resume)", () => {
       ],
       drafts: { "q-p0-0": "draft text" },
       threads: {},
+      context: [],
+      board: [],
       ghostCounts: {},
       ghostSummary: [],
       exportReady: false,

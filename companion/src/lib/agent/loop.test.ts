@@ -33,6 +33,8 @@ function seedSession(uuid: string, partial: Partial<SessionState> = {}): Session
     worksheet: [],
     drafts: {},
     threads: {},
+    context: [],
+    board: [],
     ghostCounts: {},
     ghostSummary: [],
     exportReady: false,
@@ -61,6 +63,7 @@ function stubAdapter(overrides: Partial<LLMAdapter> = {}): LLMAdapter {
       level: 0,
       escalation: "same",
     }),
+    annotate: async () => [],
     ...overrides,
   };
 }
@@ -169,6 +172,152 @@ describe("agent/loop ask", () => {
     const tutor = events.find((e) => e.evt.type === "tutor.turn")!;
     const data = tutor.evt.type === "tutor.turn" ? tutor.evt.data : null;
     expect(data?.hint).toContain("what does small-angle mean?");
+  });
+});
+
+describe("agent/loop context memory", () => {
+  it("records the full prompt, user input, and AI output for an ask turn", async () => {
+    const { publisher } = capture();
+    configureAgentLoop({ adapter: fakeAdapter, publishEvent: publisher });
+    seedSession("u1", {
+      worksheet: [{ id: "q1", index: 0, text: "x", status: "blocked" }],
+      captures: [
+        {
+          captureId: "c1",
+          pageIndex: 0,
+          hash: "abcabcabcabcabca",
+          timestamp: 1,
+          deduped: false,
+          image: "data:image/jpeg;base64,AAAA",
+        },
+      ],
+    });
+
+    const turn = { kind: "ask" as const, questionId: "q1", message: "why?" };
+    await processTurn("u1", turn);
+
+    const state = get("u1")!;
+    expect(state.context).toHaveLength(1);
+    const [entry] = state.context;
+    expect(entry.input).toEqual({ kind: "turn", turn });
+    expect(entry.questionId).toBe("q1");
+    expect(entry.prompt.map((m) => m.role)).toEqual(["system", "user"]);
+    expect(entry.prompt[1].content).toContain("why?");
+    expect(entry.material.questionText).toBe("x");
+    expect(entry.material.captureId).toBe("c1");
+    expect(entry.material.captureHash).toBe("abcabcabcabcabca");
+    expect(entry.material.image).toBe("data:image/jpeg;base64,AAAA");
+    expect(entry.output).toEqual(state.threads.q1[0]);
+  });
+
+  it("does not record context for setMode or saveDraft", async () => {
+    const { publisher } = capture();
+    configureAgentLoop({ adapter: fakeAdapter, publishEvent: publisher });
+    seedSession("u1", {
+      worksheet: [{ id: "q1", index: 0, text: "x", status: "blocked" }],
+    });
+
+    await processTurn("u1", { kind: "setMode", mode: "review" });
+    await processTurn("u1", { kind: "saveDraft", questionId: "q1", draft: "hello" });
+
+    expect(get("u1")?.context).toHaveLength(0);
+  });
+
+  it("records a context entry for an idk turn", async () => {
+    const { publisher } = capture();
+    configureAgentLoop({ adapter: fakeAdapter, publishEvent: publisher });
+    seedSession("u1", {
+      worksheet: [{ id: "q1", index: 0, text: "x", status: "blocked" }],
+    });
+
+    await processTurn("u1", { kind: "idk", questionId: "q1" });
+
+    const state = get("u1")!;
+    expect(state.context).toHaveLength(1);
+    expect(state.context[0].output).toEqual(state.threads.q1[0]);
+  });
+});
+
+describe("agent/loop canvas", () => {
+  it("applies a student board-pen turn and publishes board.element", async () => {
+    const { events, publisher } = capture();
+    configureAgentLoop({ adapter: fakeAdapter, publishEvent: publisher });
+    seedSession("u1");
+
+    await processTurn("u1", {
+      kind: "board-pen",
+      element: {
+        id: "pen-1",
+        author: "student",
+        points: [
+          { x: 0, y: 0 },
+          { x: 5, y: 5 },
+        ],
+      },
+    });
+
+    const state = get("u1")!;
+    expect(state.board).toHaveLength(1);
+    expect(state.board[0]).toMatchObject({ id: "pen-1", tool: "pen", author: "student" });
+    const evt = events.find((e) => e.evt.type === "board.element");
+    expect(evt).toBeDefined();
+  });
+
+  it("removes an element on board-remove and mirrors board.remove", async () => {
+    const { events, publisher } = capture();
+    configureAgentLoop({ adapter: fakeAdapter, publishEvent: publisher });
+    seedSession("u1", {
+      board: [
+        {
+          id: "pen-1",
+          tool: "pen",
+          author: "student",
+          points: [{ x: 0, y: 0 }],
+          color: "#1a1a1a",
+          strokeWidth: 2,
+        },
+      ],
+    });
+
+    await processTurn("u1", { kind: "board-remove", elementId: "pen-1" });
+
+    expect(get("u1")!.board).toHaveLength(0);
+    const evt = events.find((e) => e.evt.type === "board.remove");
+    expect(evt?.evt.type === "board.remove" && evt.evt.data.elementId).toBe("pen-1");
+  });
+
+  it("appends a tutor annotation after a requestCheck", async () => {
+    const { events, publisher } = capture();
+    configureAgentLoop({ adapter: fakeAdapter, publishEvent: publisher });
+    seedSession("u1", {
+      worksheet: [{ id: "q1", index: 0, text: "x?", status: "blocked" }],
+    });
+
+    await processTurn("u1", { kind: "requestCheck", questionId: "q1" });
+
+    const state = get("u1")!;
+    expect(state.board.some((el) => el.author === "tutor")).toBe(true);
+    expect(events.some((e) => e.evt.type === "board.element")).toBe(true);
+  });
+
+  it("keeps the tutor turn when annotate throws", async () => {
+    const { events, publisher } = capture();
+    configureAgentLoop({
+      adapter: stubAdapter({
+        annotate: async () => {
+          throw new Error("annotation offline");
+        },
+      }),
+      publishEvent: publisher,
+    });
+    seedSession("u1", {
+      worksheet: [{ id: "q1", index: 0, text: "x?", status: "blocked" }],
+    });
+
+    await processTurn("u1", { kind: "requestCheck", questionId: "q1" });
+
+    expect(events.some((e) => e.evt.type === "tutor.turn")).toBe(true);
+    expect(get("u1")!.board).toHaveLength(0);
   });
 });
 
