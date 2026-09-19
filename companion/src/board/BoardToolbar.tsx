@@ -39,6 +39,8 @@ type BoardToolbarProps = {
   onShapeKindChange: (shape: ShapeKind) => void;
   showTutorInject?: boolean;
   onTutorInject?: () => void;
+  /** Debug: link to the in-server capture/context inspector, opened in the same pane. */
+  inspectHref?: string;
 };
 
 export function BoardToolbar({
@@ -54,6 +56,7 @@ export function BoardToolbar({
   onShapeKindChange,
   showTutorInject = false,
   onTutorInject,
+  inspectHref,
 }: BoardToolbarProps) {
   const selectedIndex = Math.max(
     0,
@@ -235,6 +238,12 @@ export function BoardToolbar({
         <span className="board-swatch tutor" aria-hidden="true" />
         <span>Tutor</span>
       </div>
+
+      {inspectHref ? (
+        <a className="board-inspect-link" href={inspectHref}>
+          Inspect
+        </a>
+      ) : null}
 
       {showTutorInject && onTutorInject ? (
         <button
