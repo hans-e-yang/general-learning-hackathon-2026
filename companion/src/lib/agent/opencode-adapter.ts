@@ -185,7 +185,8 @@ const EXTRACT_SYSTEM = [
   '- Exercise 1 with parts a) and b) → labels "1a" and "1b" (never bare "1","2","3" for those parts).',
   '- Exercise 5 with parts a) and b) → labels "5a" and "5b" (never a bare "5" when sub-parts exist).',
   '- A standalone "Question 2" or "Exercise 4" with no a)/b) → label "2" or "4".',
-  "Keep each text field to one short identifying sentence (not the full problem statement).",
+  "In each text field, transcribe the complete problem exactly as printed, including every given value, coefficient, variable, unit, and condition needed to solve it (for example: \"A car travels 120 km in 2 hours. Find its average speed.\").",
+  "Never drop numbers, units, or definitions, and never shorten a problem to a bare title — a solver reading only the text field must have everything required to work the problem.",
   "Never answer or solve. If no question is legible, return an empty array.",
 ].join(" ");
 
@@ -351,6 +352,7 @@ export class OpenCodeAdapter implements LLMAdapter {
           content: userContent(
             [
               "Extract every question and sub-part visible in this worksheet image, top to bottom.",
+              "For each one, include the full problem with all given values, units, and conditions needed to solve it — not just a short title.",
               "Do not cap the list — include later exercises and their a)/b) children (for example 5a and 5b) when they appear.",
               "Finish the page: if Exercise 5 is visible, its sub-parts must appear in the JSON.",
               known,
