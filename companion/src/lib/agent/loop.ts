@@ -8,6 +8,7 @@ import {
   type TriageVerdict,
   type WatchVerdict,
 } from "@/lib/contracts";
+import { normalizeQuestionLabel, composeQuestionLabels } from "@/lib/questionLabel";
 import { publish } from "@/lib/session/bus";
 import { get, withLock } from "@/lib/session/store";
 import {
@@ -205,13 +206,33 @@ export async function extractFromCapture(
     const state = get(uuid);
     if (!state) return;
     const { adapter, publishEvent } = depsOrDefault();
-    const input: ExtractInput = { captureHash, pageIndex, image };
+    const input: ExtractInput = {
+      captureHash,
+      pageIndex,
+      image,
+      knownCount: state.worksheet.length,
+      knownLabels: state.worksheet
+        .map((q) => q.label)
+        .filter((label): label is string => Boolean(label && label.trim())),
+    };
     const extracted = await adapter.extract(input);
 
+    const labels = composeQuestionLabels(
+      extracted.map((q) => ({ label: q.label, text: q.text })),
+    );
     let inserted = 0;
-    for (const q of extracted) {
+    for (let i = 0; i < extracted.length; i += 1) {
+      const q = extracted[i];
       if (!state.worksheet.find((w) => w.id === q.id)) {
-        state.worksheet.push({ ...q, status: "blocked" });
+        const label =
+          labels[i] ?? normalizeQuestionLabel(q.label, q.index, q.text);
+        state.worksheet.push({
+          id: q.id,
+          index: state.worksheet.length,
+          text: q.text,
+          label,
+          status: "blocked",
+        });
         inserted += 1;
       }
     }
@@ -229,9 +250,13 @@ export async function extractFromCapture(
 }
 
 function contextDigest(state: NonNullable<ReturnType<typeof get>>): string {
+  const labels = state.worksheet
+    .map((q) => q.label)
+    .filter((label): label is string => Boolean(label && label.trim()));
   const known = state.worksheet.map((q) => q.text).join(" | ");
   return [
     `questions=${state.worksheet.length}`,
+    `labels=${labels.length > 0 ? labels.join(",") : "(none)"}`,
     `captures=${state.captures.length}`,
     `text=${known.slice(0, 400)}`,
   ].join("; ");

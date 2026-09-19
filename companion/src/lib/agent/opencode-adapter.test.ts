@@ -142,8 +142,8 @@ describe("opencode-adapter/extract", () => {
     });
 
     expect(result).toEqual([
-      { id: "q-p2-0", index: 0, text: "Solve for x." },
-      { id: "q-p2-1", index: 1, text: "Find the limit." },
+      { id: "q-1", index: 0, text: "Solve for x.", label: "1" },
+      { id: "q-2", index: 1, text: "Find the limit.", label: "2" },
     ]);
 
     const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
@@ -153,6 +153,28 @@ describe("opencode-adapter/extract", () => {
     expect(parts[1]).toEqual({
       type: "image_url",
       image_url: { url: "data:image/jpeg;base64,Zm9v" },
+    });
+  });
+
+  it("includes known labels in the extract user prompt when provided", async () => {
+    fetchMock.mockResolvedValueOnce(
+      completion({ questions: [{ label: "4", text: "Exercise 4." }] })
+    );
+    await adapter().extract({
+      captureHash: "h",
+      pageIndex: 0,
+      image: "Zm9v",
+      knownLabels: ["1a", "1b", "1c"],
+    });
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    const parts = body.messages[1].content as Array<Record<string, unknown>>;
+    expect(parts[0]).toMatchObject({
+      type: "text",
+      text: expect.stringContaining("1a, 1b, 1c"),
+    });
+    expect(parts[0]).toMatchObject({
+      type: "text",
+      text: expect.stringContaining("5a and 5b"),
     });
   });
 

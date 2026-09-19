@@ -50,6 +50,17 @@ describe("session/store", () => {
       expect(s.captures).toHaveLength(1);
     });
 
+    it("re-accepts the same hash after the recapture cooldown", () => {
+      const t0 = 1_000_000;
+      const a = recordCapture("u1", "bbb", 0, t0);
+      const b = recordCapture("u1", "bbb", 0, t0 + 5_000);
+      const c = recordCapture("u1", "bbb", 0, t0 + 25_000);
+      expect(a.deduped).toBe(false);
+      expect(b.deduped).toBe(true);
+      expect(c.deduped).toBe(false);
+      expect(get("u1")!.captures).toHaveLength(2);
+    });
+
     it("rolls the dedupe window past 5 entries", () => {
       for (let i = 0; i < 7; i += 1) {
         recordCapture("u1", `h${i}`, i, i);

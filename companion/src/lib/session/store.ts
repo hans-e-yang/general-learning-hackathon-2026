@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { RECENT_HASH_LIMIT, type SessionState } from "./types";
+import { RECAPTURE_COOLDOWN_MS, RECENT_HASH_LIMIT, type SessionState } from "./types";
 
 declare global {
   var __circlrStore: Map<string, SessionState> | undefined;
@@ -74,7 +74,12 @@ export function recordCapture(
 ): RecordCaptureResult {
   const s = getOrCreate(uuid);
   if (s.recentHashes.includes(hash)) {
-    return { captureId: "", deduped: true };
+    const lastSame = [...s.captures].reverse().find((c) => c.hash === hash);
+    if (lastSame && timestamp - lastSame.timestamp < RECAPTURE_COOLDOWN_MS) {
+      return { captureId: "", deduped: true };
+    }
+    // Cooldown elapsed: allow another pass so a static frame can finish extraction.
+    s.recentHashes = s.recentHashes.filter((h) => h !== hash);
   }
   const captureId = randomUUID();
   s.captures.push({ captureId, pageIndex, hash, timestamp, deduped: false, image });

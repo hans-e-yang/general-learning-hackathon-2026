@@ -2,6 +2,9 @@ import { Buffer } from "node:buffer";
 import { beforeEach, describe, expect, it } from "vitest";
 import { clearForTests as clearBus } from "@/lib/session/bus";
 import { clearForTests as clearStore, getOrCreate, _seed } from "@/lib/session/store";
+import { configureAgentLoop } from "@/lib/agent/loop";
+import { fakeAdapter } from "@/lib/agent/fake-adapter";
+import type { LLMAdapter } from "@/lib/agent/llm-adapter";
 import { POST as startSession } from "@/app/session/route";
 import { POST as postMaterial } from "@/app/session/[uuid]/material/route";
 import { GET as getEvents } from "@/app/session/[uuid]/events/route";
@@ -9,6 +12,7 @@ import { POST as postTurn } from "@/app/session/[uuid]/turn/route";
 import { GET as getExport } from "@/app/session/[uuid]/export/route";
 import { GET as getSession } from "@/app/session/[uuid]/route";
 import type { SessionState } from "@/lib/session/types";
+import { publish } from "@/lib/session/bus";
 
 const JPEG_BYTES = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
 const JPEG_B64 = JPEG_BYTES.toString("base64");
@@ -31,6 +35,7 @@ function req(url: string, init: RequestInit = {}): Request {
 beforeEach(() => {
   clearStore();
   clearBus();
+  configureAgentLoop({ adapter: fakeAdapter, publishEvent: publish });
 });
 
 describe("/session POST", () => {
@@ -542,10 +547,29 @@ describe("/session/:uuid/material POST -> SSE pipeline (#14/#15)", () => {
     reader.cancel();
     expect(buf).toContain("event: material.accepted");
     expect(buf).toContain("event: extraction.update");
-    expect(buf).toContain("q-p0-0");
+    expect(buf).toContain('"label":"1a"');
+    expect(buf).toContain("q-1a");
   });
 
-  it("publishes capture.triaged and skips extraction for a redundant frame (#28)", async () => {
+  it("publishes capture.triaged but still extracts when triage rejects (#28 boards grow)", async () => {
+    const rejecting: LLMAdapter = {
+      name: "rejecting-triage",
+      extract: (input) => fakeAdapter.extract(input),
+      scout: (input) => fakeAdapter.scout(input),
+      triage: async () => ({
+        update: false,
+        reason: "already known",
+        novelty: "none",
+      }),
+      tutor: (input) => fakeAdapter.tutor(input),
+      watch: (input) => fakeAdapter.watch(input),
+      idk: (input) => fakeAdapter.idk(input),
+      annotate: (input) => fakeAdapter.annotate(input),
+    };
+    configureAgentLoop({
+      adapter: rejecting,
+      publishEvent: publish,
+    });
     const s = (await (
       await startSession(req("http://test.local/session", { method: "POST" }))
     ).json()) as { uuid: string };
@@ -574,16 +598,16 @@ describe("/session/:uuid/material POST -> SSE pipeline (#14/#15)", () => {
       }),
       { params: Promise.resolve({ uuid: s.uuid }) }
     );
-    await readUntil((s) => s.includes("event: capture.triaged"));
+    await readUntil((s) => s.includes("event: extraction.update"));
     ctrl.abort();
     reader.cancel();
     expect(buf).toContain("event: capture.triaged");
     expect(buf).toContain(`"update":false`);
     expect(buf).toContain(`"novelty":"none"`);
-    expect(buf).not.toContain("event: extraction.update");
+    expect(buf).toContain("event: extraction.update");
   });
 
-  it("gates extraction on a positive triage verdict (#28)", async () => {
+  it("runs extraction after triage on an accepted capture (#28)", async () => {
     const s = (await (
       await startSession(req("http://test.local/session", { method: "POST" }))
     ).json()) as { uuid: string };
@@ -716,7 +740,8 @@ describe("/session/:uuid/material POST -> SSE pipeline (#14/#15)", () => {
     if (value) buf += dec.decode(value, { stream: true });
     reader.cancel();
     expect(buf).toContain("worksheet");
-    expect(buf).toContain("q-p0-0");
+    expect(buf).toContain("q-1a");
+    expect(buf).toContain('"label":"1a"');
   });
 });
 

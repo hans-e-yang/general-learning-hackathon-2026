@@ -490,6 +490,10 @@ components:
           minimum: 0
         text:
           type: string
+        label:
+          type: string
+          minLength: 1
+          description: Soft board title from the printed question label (e.g. 1a, 2)
         status:
           $ref: "#/components/schemas/AssessmentStatus"
     GhostSummaryEntry:
@@ -521,6 +525,10 @@ components:
           minimum: 0
         text:
           type: string
+        label:
+          type: string
+          minLength: 1
+          description: Printed question label used as the board soft title
     TutorTurn:
       type: object
       required: [questionId, hint, level, escalation]

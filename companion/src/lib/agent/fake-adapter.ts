@@ -1,4 +1,6 @@
 import type { BoardAnnotationTurn } from "@/contracts/board";
+import { stableQuestionId } from "@/lib/questionIdentity";
+import { composeQuestionLabels } from "@/lib/questionLabel";
 import { looksLikeFinalAnswer } from "./answer-guard";
 import type {
   AnnotateInput,
@@ -25,6 +27,18 @@ const HINT_LADDER = [
   "What assumption are you making here? Name it before you continue.",
   "Try working the problem from the definition. What does each symbol mean?",
   "Walk me through each step. Do not yet write your final sentence.",
+];
+
+/** Demo bank only — FakeAdapter does NOT read the capture image. */
+const QUESTION_BANK: { label: string; text: string }[] = [
+  { label: "1a", text: "Exercise 1\na) A biased die and a probability table." },
+  { label: "1b", text: "b) Expected value and an indicator function." },
+  { label: "1c", text: "c) Entropy / mutual information for independent variables." },
+  { label: "1d", text: "d) Further entropy / information identity on the sheet." },
+  { label: "2", text: "Exercise 2. Maximum likelihood estimates of naive Bayes (Laplacian)." },
+  { label: "3", text: "Exercise 3. Posterior of LDA is a sigmoid; prove the form." },
+  { label: "4", text: "Exercise 4. Further worksheet problem visible after scrolling." },
+  { label: "5", text: "Exercise 5. Later worksheet problem visible after scrolling." },
 ];
 
 const TUTOR_SYSTEM =
@@ -108,16 +122,24 @@ export class FakeAdapter implements LLMAdapter {
   readonly name = "fake";
 
   async extract(input: ExtractInput): Promise<ExtractedQuestion[]> {
-    const seed = hash32(`extract:${input.captureHash}:${input.pageIndex}`);
-    const n = (seed % 3) + 1;
-    const questions: ExtractedQuestion[] = [];
-    for (let i = 0; i < n; i += 1) {
-      const id = `q-p${input.pageIndex}-${i}`;
-      const tag = input.captureHash.slice(0, 4);
-      const text = `Question ${i + 1} on page ${input.pageIndex} (capture ${tag}…)`;
-      questions.push({ id, index: i, text });
-    }
-    return questions;
+    // Demo only: ignores the JPEG. Grow the unlocked prefix as the worksheet
+    // already has questions (extension pageIndex is often stuck at 0).
+    // Same knownCount → same prefix (stable re-extract); more known → unlock +2.
+    const known = Math.max(0, input.knownCount ?? 0);
+    const count = Math.min(
+      QUESTION_BANK.length,
+      known === 0 ? 3 : Math.min(QUESTION_BANK.length, known + 2),
+    );
+    return QUESTION_BANK.slice(0, count).map((q, index) => {
+      const label =
+        composeQuestionLabels([{ label: q.label, text: q.text }])[0] ?? q.label;
+      return {
+        id: stableQuestionId(label, q.text),
+        index,
+        text: q.text,
+        label,
+      };
+    });
   }
 
   async scout(input: ScoutInput): Promise<ScoutVerdict> {
@@ -125,22 +147,12 @@ export class FakeAdapter implements LLMAdapter {
     return { status, reasoning, escalate: status !== "solid" };
   }
 
-  async triage(input: TriageInput): Promise<TriageVerdict> {
-    const hash = input.captureHash ?? "";
-    const lastHex = hash.length > 0 ? parseInt(hash[hash.length - 1], 16) : 0;
-    const update = Number.isNaN(lastHex) ? true : lastHex % 2 === 1;
-    if (!update) {
-      return {
-        update: false,
-        reason: "capture adds no information the session context lacks",
-        novelty: "none",
-      };
-    }
-    const novelty = lastHex >= 8 ? "new-material" : "new-questions";
+  async triage(_input: TriageInput): Promise<TriageVerdict> {
+    // Always accept so boards can grow as captures arrive (pageIndex is often 0).
     return {
       update: true,
-      reason: `deterministic triage accepted hash ${hash.slice(0, 6)} as ${novelty}`,
-      novelty,
+      reason: "accepting capture so newly visible questions can extend the worksheet",
+      novelty: "new-questions",
     };
   }
 

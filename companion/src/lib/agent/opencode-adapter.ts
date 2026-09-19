@@ -10,6 +10,8 @@ import {
   type ExtractedQuestion,
   type TutorTurn,
 } from "@/lib/contracts";
+import { stableQuestionId } from "@/lib/questionIdentity";
+import { composeQuestionLabels } from "@/lib/questionLabel";
 import { looksLikeFinalAnswer } from "./answer-guard";
 import type {
   AnnotateInput,
@@ -124,7 +126,12 @@ export function parseJsonLoose(raw: string): unknown {
 }
 
 const ExtractResultSchema = z.object({
-  questions: z.array(z.object({ text: z.string().min(1) })),
+  questions: z.array(
+    z.object({
+      text: z.string().min(1),
+      label: z.string().optional(),
+    }),
+  ),
 });
 
 const ScoutResultSchema = z.object({
@@ -172,9 +179,14 @@ const AnnotateResultSchema = z.object({
 
 const EXTRACT_SYSTEM = [
   "You extract exam questions from photos of student worksheets.",
-  'Respond with strict JSON: {"questions":[{"text":"..."}]}.',
-  "Transcribe each question faithfully in reading order; never answer, solve, or paraphrase.",
-  "Treat sub-parts as separate questions. If no question is legible, return an empty array.",
+  'Respond with strict JSON: {"questions":[{"label":"1a","text":"..."}]}.',
+  "Scan the image top to bottom and return EVERY legible question and sub-part. There is no upper limit — do not stop early and do not omit the last exercise on the page.",
+  "Each sub-part is its own question. Labels MUST mirror the print:",
+  '- Exercise 1 with parts a) and b) → labels "1a" and "1b" (never bare "1","2","3" for those parts).',
+  '- Exercise 5 with parts a) and b) → labels "5a" and "5b" (never a bare "5" when sub-parts exist).',
+  '- A standalone "Question 2" or "Exercise 4" with no a)/b) → label "2" or "4".',
+  "Keep each text field to one short identifying sentence (not the full problem statement).",
+  "Never answer or solve. If no question is legible, return an empty array.",
 ].join(" ");
 
 const SCOUT_SYSTEM = [
@@ -223,10 +235,13 @@ const WATCH_SYSTEM = [
 
 const TRIAGE_SYSTEM = [
   "You decide whether a newly captured screen image carries information a study session does not already have.",
-  "You are given a digest of the session context (known questions and capture count) and the new capture image.",
+  "You are given a digest of the session context (known question labels/count and capture count) and the new capture image.",
   'Respond with strict JSON: {"update":true|false,"reason":"one short sentence","novelty":"new-questions|new-material|none"}.',
-  "Set update=false when the image overlaps what is already captured (same page, a small scroll, no legible new content) and novelty=none.",
-  "Set update=true when the image reveals questions or material not represented in the digest; pick the matching novelty.",
+  "Compare printed question labels in the image to the digest's labels list.",
+  "Set update=true and novelty=new-questions when any legible question/sub-part label is missing from that list (for example digest has 1a,1b,1c but the image shows 4 or 5) — even on a small scroll of the same PDF.",
+  "Set update=true and novelty=new-material when the frame shows new worked content or a new region without new question labels.",
+  "Set update=false and novelty=none only when every legible question label is already listed and nothing material is new.",
+  "When unsure, prefer update=true.",
   "Never restate, answer, or solve anything.",
 ].join(" ");
 
@@ -320,13 +335,22 @@ export class OpenCodeAdapter implements LLMAdapter {
   }
 
   async extract(input: ExtractInput): Promise<ExtractedQuestion[]> {
+    const known =
+      input.knownLabels && input.knownLabels.length > 0
+        ? `Already extracted labels (keep returning them if still visible; also add any new ones): ${input.knownLabels.join(", ")}.`
+        : "No questions extracted yet.";
     const data = await this.jsonCall(
       [
         { role: "system", content: EXTRACT_SYSTEM },
         {
           role: "user",
           content: userContent(
-            "Extract every question visible on this page of the worksheet.",
+            [
+              "Extract every question and sub-part visible in this worksheet image, top to bottom.",
+              "Do not cap the list — include later exercises and their a)/b) children (for example 5a and 5b) when they appear.",
+              "Finish the page: if Exercise 5 is visible, its sub-parts must appear in the JSON.",
+              known,
+            ].join(" "),
             input.image
           ),
         },
@@ -334,11 +358,19 @@ export class OpenCodeAdapter implements LLMAdapter {
       { model: this.visionModel(), maxTokens: VISION_MAX_TOKENS },
       ExtractResultSchema
     );
-    return data.questions.map((q, index) => ({
-      id: `q-p${input.pageIndex}-${index}`,
-      index,
-      text: q.text.trim(),
-    }));
+    const labels = composeQuestionLabels(
+      data.questions.map((q) => ({ label: q.label, text: q.text.trim() })),
+    );
+    return data.questions.map((q, index) => {
+      const text = q.text.trim();
+      const label = labels[index] ?? String(index + 1);
+      return {
+        id: stableQuestionId(label, text),
+        index,
+        text,
+        label,
+      };
+    });
   }
 
   async scout(input: ScoutInput): Promise<ScoutVerdict> {

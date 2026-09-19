@@ -9,12 +9,20 @@ export function BoardCarousel(props: {
   onPrev: () => void;
   onNext: () => void;
   empty: boolean;
+  processing?: boolean;
   children: ReactNode;
 }) {
   if (props.empty) {
     return (
       <div className="board-empty" role="status">
-        Waiting for questions from the Document…
+        {props.processing ? (
+          <>
+            <span className="board-capture-spinner" aria-hidden="true" />
+            Reading questions from the capture…
+          </>
+        ) : (
+          "Waiting for questions from the Document…"
+        )}
       </div>
     );
   }

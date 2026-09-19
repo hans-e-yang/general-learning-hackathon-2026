@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { BoardCarousel } from "@/board/BoardCarousel";
 import { BoardJumpStrip } from "@/board/BoardJumpStrip";
 import { BoardSurface } from "@/board/BoardSurface";
@@ -11,28 +11,53 @@ import { normalizeQuestionLabel } from "@/lib/questionLabel";
 import { subscribeWorksheet } from "@/session/worksheetChannel";
 
 const SESSION_KEY = "circlr-session-uuid";
+/** Clear the spinner if extract never returns (network / model hang). */
+const CAPTURE_PROCESSING_TIMEOUT_MS = 90_000;
 
-function readSessionUuid(): string {
-  const params = new URLSearchParams(window.location.search);
-  const fromQuery = params.get("s");
-  if (fromQuery) return fromQuery;
-  const existing = window.localStorage.getItem(SESSION_KEY);
-  if (existing) return existing;
-  const created = crypto.randomUUID();
-  window.localStorage.setItem(SESSION_KEY, created);
-  return created;
+function readQuerySessionUuid(): string | null {
+  if (typeof window === "undefined") return null;
+  return new URLSearchParams(window.location.search).get("s");
 }
 
-function subscribeSession() {
-  return () => {};
+function subscribeSession(onStoreChange: () => void) {
+  window.addEventListener("popstate", onStoreChange);
+  return () => window.removeEventListener("popstate", onStoreChange);
 }
 
-function getSessionSnapshot(): string {
-  return readSessionUuid();
+function getSessionSnapshot(): string | null {
+  return readQuerySessionUuid();
 }
 
 function getServerSnapshot(): null {
   return null;
+}
+
+async function mintSessionUuid(): Promise<string> {
+  const res = await fetch("/session", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: "{}",
+  });
+  if (!res.ok) throw new Error(`POST /session failed: ${res.status}`);
+  const data = (await res.json()) as { uuid?: string };
+  if (!data.uuid) throw new Error("POST /session returned no uuid");
+  return data.uuid;
+}
+
+async function sessionExists(uuid: string): Promise<boolean> {
+  try {
+    const res = await fetch(`/session/${uuid}`);
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+function writeSessionToUrl(uuid: string): void {
+  const url = new URL(window.location.href);
+  url.searchParams.set("s", uuid);
+  window.history.replaceState({}, "", url.toString());
+  window.dispatchEvent(new Event("popstate"));
 }
 
 function BoardShell({ sessionUuid }: { sessionUuid: string }) {
@@ -67,17 +92,40 @@ function BoardShell({ sessionUuid }: { sessionUuid: string }) {
     movePen,
     moveShape,
   } = useMultiBoardSession();
+  const [captureProcessing, setCaptureProcessing] = useState(false);
 
   useEffect(() => {
-    return subscribeWorksheet(sessionUuid, (qs) => {
-      // Soft titles are UI-derived until extract returns printed labels again.
-      syncQuestions(
-        qs.map((q) => ({
-          id: q.id,
-          label: normalizeQuestionLabel(undefined, q.index),
-        })),
-      );
-    });
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const clearBusy = () => {
+      if (timeout) clearTimeout(timeout);
+      timeout = undefined;
+      setCaptureProcessing(false);
+    };
+    const unsub = subscribeWorksheet(
+      sessionUuid,
+      (qs) => {
+        syncQuestions(
+          qs.map((q) => ({
+            id: q.id,
+            label: normalizeQuestionLabel(q.label, q.index, q.text),
+          })),
+        );
+      },
+      {
+        onCaptureProcessing: (busy) => {
+          if (timeout) clearTimeout(timeout);
+          timeout = undefined;
+          setCaptureProcessing(busy);
+          if (busy) {
+            timeout = setTimeout(clearBusy, CAPTURE_PROCESSING_TIMEOUT_MS);
+          }
+        },
+      },
+    );
+    return () => {
+      unsub();
+      if (timeout) clearTimeout(timeout);
+    };
   }, [sessionUuid, syncQuestions]);
 
   const activeLabel =
@@ -102,11 +150,19 @@ function BoardShell({ sessionUuid }: { sessionUuid: string }) {
         shapeKind={shapeKind}
         onShapeKindChange={setShapeKind}
       />
-      <BoardJumpStrip
-        items={questions}
-        activeId={activeQuestionId}
-        onSelect={setActiveQuestionId}
-      />
+      <div className="board-status-row">
+        <BoardJumpStrip
+          items={questions}
+          activeId={activeQuestionId}
+          onSelect={setActiveQuestionId}
+        />
+        {captureProcessing ? (
+          <p className="board-capture-busy" role="status" aria-live="polite">
+            <span className="board-capture-spinner" aria-hidden="true" />
+            Reading capture…
+          </p>
+        ) : null}
+      </div>
       <BoardCarousel
         label={activeLabel}
         canPrev={canPrev}
@@ -114,6 +170,7 @@ function BoardShell({ sessionUuid }: { sessionUuid: string }) {
         onPrev={goPrev}
         onNext={goNext}
         empty={empty}
+        processing={captureProcessing}
       >
         <div className="board-stage">
           <BoardSurface
@@ -144,15 +201,58 @@ function BoardShell({ sessionUuid }: { sessionUuid: string }) {
 }
 
 export function BoardApp() {
-  const sessionUuid = useSyncExternalStore(
+  const queryUuid = useSyncExternalStore(
     subscribeSession,
     getSessionSnapshot,
     getServerSnapshot,
   );
+  const [resolvedUuid, setResolvedUuid] = useState<string | null>(null);
+  const [bootError, setBootError] = useState<string | null>(null);
 
-  if (!sessionUuid) {
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        setBootError(null);
+        // Prefer ?s= from the extension; verify it still exists (dev server restarts wipe memory).
+        if (queryUuid && (await sessionExists(queryUuid))) {
+          if (cancelled) return;
+          window.localStorage.setItem(SESSION_KEY, queryUuid);
+          setResolvedUuid(queryUuid);
+          return;
+        }
+        // Stale ?s= or no query: mint a live Session on this server.
+        const uuid = await mintSessionUuid();
+        if (cancelled) return;
+        window.localStorage.setItem(SESSION_KEY, uuid);
+        writeSessionToUrl(uuid);
+        setResolvedUuid(uuid);
+      } catch (err) {
+        if (!cancelled) {
+          setBootError(
+            err instanceof Error ? err.message : "Failed to start a Session",
+          );
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [queryUuid]);
+
+  if (bootError) {
+    return (
+      <div className="board-app">
+        <p className="board-session-error" role="alert">
+          {bootError}
+        </p>
+      </div>
+    );
+  }
+
+  if (!resolvedUuid) {
     return <div className="board-app" aria-busy="true" />;
   }
 
-  return <BoardShell sessionUuid={sessionUuid} />;
+  return <BoardShell sessionUuid={resolvedUuid} />;
 }
