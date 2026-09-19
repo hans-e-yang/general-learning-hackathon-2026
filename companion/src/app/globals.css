@@ -510,18 +510,26 @@ body {
   min-height: 0;
   overflow: hidden;
   container-type: size;
-  /* Solid paper only — grid is a separate overlay so eraser cannot cover it. */
-  background-color: #fffdf8;
+  /* Surround only. The page is painted by .board-surface so the drawable area
+     and the rasterized image sent to the agent share the exact same 800x1200 box. */
+  background-color: transparent;
 }
 
 .board-surface {
   display: block;
-  width: 100%;
-  height: 100%;
+  position: absolute;
+  top: 0;
+  left: 50%;
+  translate: -50% 0;
+  /* Match the 800x1200 board page exactly instead of filling the viewport,
+     so strokes can never be drawn outside the region the raster captures. */
+  width: min(100cqw, calc(100cqh * 800 / 1200));
+  height: min(100cqh, calc(100cqw * 1200 / 800));
   touch-action: none;
   cursor: crosshair;
-  background: transparent;
-  position: relative;
+  /* Solid paper on the page only; grid is a separate overlay so eraser cannot cover it. */
+  background: #fffdf8;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--paper-line) 70%, transparent);
   z-index: 0;
 }
 
@@ -542,7 +550,12 @@ body {
 
 .board-grid-overlay {
   position: absolute;
-  inset: 0;
+  top: 0;
+  left: 50%;
+  translate: -50% 0;
+  /* Same 800x1200 page box as .board-surface, so the grid marks the drawable area. */
+  width: min(100cqw, calc(100cqh * 800 / 1200));
+  height: min(100cqh, calc(100cqw * 1200 / 800));
   pointer-events: none;
   z-index: 1;
   /* Tileable SVG grid — multiply so lines show on paper but not across black ink. */

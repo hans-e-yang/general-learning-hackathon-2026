@@ -20,7 +20,7 @@ export function renderBoardToJpeg(
   const ctx = canvas.getContext("2d");
   if (!ctx) return "";
   ctx.scale(scale, scale);
-  ctx.fillStyle = "#ffffff";
+  ctx.fillStyle = "#fffdf8";
   ctx.fillRect(0, 0, BOARD_VIEWBOX.width, BOARD_VIEWBOX.height);
   ctx.lineCap = "round";
   ctx.lineJoin = "round";

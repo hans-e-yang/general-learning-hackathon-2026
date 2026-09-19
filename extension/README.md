@@ -9,9 +9,10 @@ Document.
 - Session ignition from the toolbar action
 - Side Panel hosting with the Companion iframe (`panel ⇄ background`)
 - Capture ingest with local buffering and `chrome.storage.session` persistence
-- Interval capture: a screenshot of the active tab on a fixed
-  `CAPTURE_INTERVAL_MS` timer, with average-hash dedupe and an MV3 keepalive /
-  watchdog so the loop keeps running
+- Interval capture: a screenshot of the active tab, triggered when an injected
+  page-activity detector reports the student has been idle for ~2s (with a
+  `CAPTURE_INTERVAL_MS` fallback timer), average-hash dedupe, and an MV3
+  keepalive / watchdog so the loop keeps running
 - The LMS drop layer is a later ticket (#18)
 
 Set up last, after and against contract-freeze work with the `companion/` Next.js app.
@@ -92,14 +93,20 @@ each capture appears in the panel as it is uploaded; you can also open
 
 ## Capture loop
 
-`src/background.ts` screenshots the **active tab** on a fixed
-`CAPTURE_INTERVAL_MS` timer: `captureVisibleTab` → 1280px JPEG q≈0.7 →
-average-hash fingerprint → dedupe → `POST /material`. There is no scroll / page /
-focus detection — every tick is captured, and a frame whose 16-hex average hash
-is within Hamming <4 of the rolling last-32 is skipped rather than re-uploaded.
-Every `FORCE_RECAPTURE_EVERY` ticks (~20s) the loop instead pings `GET /health`,
-so a static page is never re-uploaded. Protected pages (`chrome://…`) skip the
-tick. Captures are serialized so uploads stay ordered.
+`src/background.ts` screenshots the **active tab** when the student pauses: a
+self-contained function is injected into the active tab via
+`chrome.scripting.executeScript`, listens for `keydown` / `pointerdown` /
+`scroll` / `mousemove`, and after ~2s of quiet sends an `{kind:"active"}`
+message. That message triggers `captureVisibleTab` → 1280px JPEG q≈0.7 →
+average-hash fingerprint → dedupe → `POST /material`. A `CAPTURE_INTERVAL_MS`
+fallback timer still fires every 2s in case the detector's message is missed
+(e.g. the page was reloaded mid-session), and every `FORCE_RECAPTURE_EVERY`
+ticks (~20s) the loop instead pings `GET /health`, so a static page is never
+re-uploaded. A frame whose 16-hex average hash is within Hamming <4 of the
+rolling last-32 is skipped rather than re-uploaded, so idle-triggered captures
+of an unchanged page do not re-POST. Protected pages (`chrome://…`) cannot host
+the detector — and cannot be captured — so the tick is skipped. Captures are
+serialized so uploads stay ordered.
 
 The loop starts when the panel reports the Companion is live. To survive the
 MV3 ~30s idle kill, a cheap `chrome.runtime.getPlatformInfo()` call every

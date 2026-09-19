@@ -288,7 +288,12 @@ export function BoardSurface({
     pt.x = clientX;
     pt.y = clientY;
     const local = pt.matrixTransform(ctm.inverse());
-    return { x: local.x, y: local.y };
+    // Keep every point inside the board page. The raster sent to the agent is
+    // exactly 800x1200, so anything outside would be silently cropped.
+    return {
+      x: clamp(local.x, 0, BOARD_VIEWBOX.width),
+      y: clamp(local.y, 0, BOARD_VIEWBOX.height),
+    };
   }, []);
 
   const eraseAtPoint = useCallback(

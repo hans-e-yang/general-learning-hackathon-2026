@@ -4,14 +4,18 @@
 //   1. Toolbar click → side panel opens (openPanelOnActionClick).
 //   2. Panel {kind:"ignite"} → POST /session; reply with uuid + Companion URL.
 //   3. Panel {kind:"capture"} → the Companion is live; start the capture loop.
-//   4. Loop: every CAPTURE_INTERVAL_MS, screenshot the active tab →
-//      1280px JPEG → hash → dedupe → POST /material; every FORCE_RECAPTURE_EVERY
-//      ticks it pings GET /health instead (no image re-upload).
+//   4. Loop: an injected activity detector in the Document page reports when the
+//      student has been idle for ~2s; that {kind:"active"} message triggers a
+//      screenshot of the active tab → 1280px JPEG → hash → dedupe →
+//      POST /material. A low-rate CAPTURE_INTERVAL_MS fallback fires even if the
+//      detector's message is missed (e.g. the page was reloaded mid-session), and
+//      every FORCE_RECAPTURE_EVERY ticks it pings GET /health instead of
+//      re-uploading a near-duplicate frame.
 //
-// No detection: a screenshot fires on a fixed interval regardless of scroll,
-// page changes, focus, or content. The one filter kept is dedupe: a frame whose
-// hash is within Hamming <4 of a recent one is not re-uploaded. The periodic
-// healthcheck replaces the old force-recapture so a static frame is never resent.
+// The idle trigger is why this feels eager: the capture happens right after the
+// student stops working, not on an arbitrary tick. Dedupe still drops a frame
+// whose hash is within Hamming <4 of a recent one, so idle-triggered captures of
+// an unchanged page do not re-POST.
 //
 // MV3 lifecycle: Chrome terminates an extension service worker after ~30s idle.
 // A `setInterval` does not count as activity and is lost when the worker dies,
@@ -26,6 +30,7 @@ import type {
   BackgroundToPanel,
   CapturePayload,
   IngestResult,
+  PageToBackground,
   PanelToBackground
 } from "./messages.js";
 import {
@@ -40,6 +45,10 @@ import {
 import { HAMMING_THRESHOLD, isDuplicate, RECENT_HASH_LIMIT } from "./hash.js";
 import { processCapture } from "./capture-image.js";
 
+// Fallback cadence. The primary trigger is the page activity detector reporting
+// ~2s of idle; this timer catches the case where that message is missed (the
+// document page was reloaded without re-injecting the detector). Kept equal to
+// the detector's IDLE_MS so the cadence is unchanged if the fallback takes over.
 export const CAPTURE_INTERVAL_MS = 2_000;
 /**
  * Every N ticks, ping GET /health instead of re-uploading a near-duplicate frame.
@@ -47,6 +56,49 @@ export const CAPTURE_INTERVAL_MS = 2_000;
  * signal on the same cadence without the bytes or a re-extraction pass.
  */
 export const FORCE_RECAPTURE_EVERY = 10;
+
+// The idle detector is injected as a self-contained function
+// (chrome.scripting func form) rather than a separate content-script file, so it
+// survives tsc's module wrapping and cannot be broken by a stray `export {}` in
+// a classic-script context. It runs only on the active tab, for the duration of a
+// Session, under the broad host_permissions we already hold.
+
+// Runs IN THE PAGE (not the worker): serialized by chrome.scripting, so it must
+// not close over anything here. Sends {kind:"active"} to the worker after IDLE_MS
+// of no input. Edge-triggered — it will not re-report until activity resumes.
+function installActivityDetector(): void {
+  const IDLE_MS = 2_000;
+  const THROTTLE_MS = 250;
+  let idleTimer: ReturnType<typeof setTimeout> | null = null;
+  let lastSignal = 0;
+  let reported = false;
+
+  function reportIdle(): void {
+    if (reported) return;
+    reported = true;
+    try {
+      chrome.runtime.sendMessage({ kind: "active" }).catch(() => {});
+    } catch {
+      /* extension context invalidated */
+    }
+  }
+
+  function noteActivity(): void {
+    const now = Date.now();
+    if (now - lastSignal < THROTTLE_MS) return;
+    lastSignal = now;
+    reported = false;
+    if (idleTimer !== null) clearTimeout(idleTimer);
+    idleTimer = setTimeout(reportIdle, IDLE_MS);
+  }
+
+  for (const type of ["keydown", "pointerdown", "scroll", "mousemove"] as const) {
+    window.addEventListener(type, noteActivity, { passive: true, capture: true });
+  }
+
+  // A page that is loaded but never touched should capture its initial state.
+  idleTimer = setTimeout(reportIdle, IDLE_MS);
+}
 
 // MV3 keepalive/watchdog (see header). 20s < the 30s idle timeout; 0.5min is
 // chrome.alarms' minimum period.
@@ -178,13 +230,37 @@ function startKeepalive(): void {
   }, KEEPALIVE_MS);
 }
 
+// Inject the activity detector into the active tab. Best-effort: it cannot run
+// on protected pages (chrome://, the Web Store, other extensions), where we fall
+// back to the interval timer. Uses the `func` form so the serialized function is
+// immune to tsc's module wrappers (a `files:` content script that ends up with an
+// `export {}` is a classic-script SyntaxError and never runs).
+async function injectActivityDetector(): Promise<void> {
+  let tab: chrome.tabs.Tab | undefined;
+  try {
+    [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  } catch {
+    return;
+  }
+  if (!tab || tab.id === undefined) return;
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: installActivityDetector
+    });
+  } catch (err) {
+    console.warn("[capture] could not inject activity detector (protected page?)", err);
+  }
+}
+
 function startCapturing(): void {
   capturing = true;
   void writeCapturing(true);
   startKeepalive();
   chrome.alarms.create(WATCHDOG_ALARM, { periodInMinutes: WATCHDOG_PERIOD_MIN });
+  void injectActivityDetector();
   if (captureTimer !== null) return;
-  scheduleCapture(); // immediate first frame, then every interval
+  scheduleCapture(); // immediate first frame, then every interval (fallback)
   captureTimer = setInterval(scheduleCapture, CAPTURE_INTERVAL_MS);
 }
 
@@ -218,43 +294,50 @@ function resumeIfLive(): void {
 
 // Single onMessage router. Returning `true` keeps the sendResponse channel open
 // for the async reply each branch below needs.
-chrome.runtime.onMessage.addListener((msg: PanelToBackground, _sender, sendResponse) => {
-  // Panel → background: start a Session, reply with uuid + Companion embed URL.
-  if (msg.kind === "ignite") {
-    void (async () => {
-      await hydrated;
-      let uuid: string | null;
-      try {
-        uuid = await igniteSession(session);
-      } catch {
-        uuid = null;
-      }
-      const out: BackgroundToPanel = {
-        kind: "ignited",
-        uuid,
-        companionUrl: await companionUrl(uuid),
-        error: uuid ? undefined : "backend-unreachable"
-      };
-      sendResponse(out);
-    })();
-    return true; // async response
+chrome.runtime.onMessage.addListener(
+  (msg: PanelToBackground | PageToBackground, _sender, sendResponse) => {
+    // Page → background: the student went idle — a good moment to capture.
+    if (msg.kind === "active") {
+      if (capturing) scheduleCapture();
+      return false;
+    }
+    // Panel → background: start a Session, reply with uuid + Companion embed URL.
+    if (msg.kind === "ignite") {
+      void (async () => {
+        await hydrated;
+        let uuid: string | null;
+        try {
+          uuid = await igniteSession(session);
+        } catch {
+          uuid = null;
+        }
+        const out: BackgroundToPanel = {
+          kind: "ignited",
+          uuid,
+          companionUrl: await companionUrl(uuid),
+          error: uuid ? undefined : "backend-unreachable"
+        };
+        sendResponse(out);
+      })();
+      return true; // async response
+    }
+    // Panel → background: the Companion is live — start screenshotting.
+    if (msg.kind === "capture") {
+      startCapturing();
+      sendResponse({ done: true });
+      return true;
+    }
+    // Panel → background: the panel is closing — stop capturing and end the
+    // Session so reopening does not resurrect the old Document's Worksheet.
+    if (msg.kind === "stop") {
+      stopCapturing();
+      endSession(session);
+      sendResponse({ done: true });
+      return true;
+    }
+    return false;
   }
-  // Panel → background: the Companion is live — start screenshotting on a timer.
-  if (msg.kind === "capture") {
-    startCapturing();
-    sendResponse({ done: true });
-    return true;
-  }
-  // Panel → background: the panel is closing — stop capturing and end the
-  // Session so reopening does not resurrect the old Document's Worksheet.
-  if (msg.kind === "stop") {
-    stopCapturing();
-    endSession(session);
-    sendResponse({ done: true });
-    return true;
-  }
-  return false;
-});
+);
 
 // A worker restart keeps the uuid (hydrate) but loses the timer; if a Session is
 // already live and still marked as capturing, resume without another panel message.

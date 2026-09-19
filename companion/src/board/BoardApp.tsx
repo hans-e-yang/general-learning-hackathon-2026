@@ -86,19 +86,9 @@ function BoardShell({ sessionUuid }: { sessionUuid: string }) {
     [],
   );
 
-  /** Idle canvas snapshot → agent annotations come back over the board SSE. */
-  const annotateOnIdle = useCallback(
-    async ({
-      questionId,
-      elements,
-    }: {
-      questionId: string;
-      elements: BoardElement[];
-    }) => {
-      // The student already acknowledged the issue; don't interrupt.
-      if ((annotationStatusRef.current[questionId] ?? "idle") === "working") {
-        return;
-      }
+  /** Send a snapshot to the agent so it can annotate the board over the SSE. */
+  const sendSnapshot = useCallback(
+    async (questionId: string, elements: BoardElement[]) => {
       if (elements.length === 0) return;
       const image = renderBoardToJpeg(elements);
       if (!image) return;
@@ -112,6 +102,17 @@ function BoardShell({ sessionUuid }: { sessionUuid: string }) {
       }
     },
     [sessionUuid],
+  );
+
+  /**
+   * Idle canvas snapshot → agent annotations come back over the board SSE. Always
+   * sends: the agent holds no per-board pause state here, so a student who is
+   * still working keeps getting fresh reads of the board.
+   */
+  const annotateOnIdle = useCallback(
+    ({ questionId, elements: snapshot }: { questionId: string; elements: BoardElement[] }) =>
+      sendSnapshot(questionId, snapshot),
+    [sendSnapshot],
   );
 
   const {
@@ -219,19 +220,32 @@ function BoardShell({ sessionUuid }: { sessionUuid: string }) {
 
   const markResolved = useCallback(() => {
     if (!activeQuestionId) return;
-    dismissTutorMarks(activeQuestionId);
-    setStatusFor(activeQuestionId, "resolved");
+    // Keep the student's ink, drop the Tutor's marks, then re-send the board so
+    // the agent sees the resolved state and can start a fresh pass. The snapshot
+    // is rendered from student-only elements, matching what dismissTutorMarks
+    // leaves on screen.
+    const questionId = activeQuestionId;
+    const studentElements = elements.filter((el) => el.author !== "tutor");
+    dismissTutorMarks(questionId);
+    setStatusFor(questionId, "resolved");
     void fetch(`/session/${sessionUuid}/turn`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        kind: "dismissAnnotation",
-        questionId: activeQuestionId,
-      }),
+      body: JSON.stringify({ kind: "dismissAnnotation", questionId }),
     }).catch(() => {
       /* local dismissal already stands; the agent will re-mark on the next edit */
     });
-  }, [activeQuestionId, dismissTutorMarks, sessionUuid, setStatusFor]);
+    void sendSnapshot(questionId, studentElements).catch(() => {
+      /* the next idle edit re-sends; a failed resolve snapshot is not fatal */
+    });
+  }, [
+    activeQuestionId,
+    elements,
+    dismissTutorMarks,
+    sessionUuid,
+    sendSnapshot,
+    setStatusFor,
+  ]);
 
   return (
     <div className="board-app">

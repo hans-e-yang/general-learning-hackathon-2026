@@ -18,6 +18,10 @@ export type PanelToBackground =
   | { kind: "capture" }
   | { kind: "stop" };
 
+// Page → background: the injected activity detector reports the student has gone
+// idle (~2s of no input) on the Document page, so it is a good moment to capture.
+export type PageToBackground = { kind: "active" };
+
 export type BackgroundToPanel =
   | { kind: "ignited"; uuid: string | null; companionUrl: string; error?: string }
   | { kind: "capture-ingested"; ok: boolean; pendingCount: number; backendReachable: boolean };
