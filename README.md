@@ -9,3 +9,7 @@ Split-screen browser study companion: the Chrome extension live-reads the docume
 ## Deferred concern: the Practice Loop (do not forget)
 
 Review Mode's Tutor behavior was designed but **deliberately cut** from the first build (24-hour hackathon scope): the Tutor poses sample questions about the material, assesses the student's attempt, corrects wrong assumptions, and generates similar questions until the student answers solidly. `CONTEXT.md` already names the concept. It is the next concern to build after the Assignment Mode core ships.
+
+## Deferred concern: Exported Board crops (after demo)
+
+Board marks attaching to the Export PDF were designed but **deliberately cut** this cycle — the Export stays text-only per Worksheet block. Crop attachment is the next Export concern after the demo.
