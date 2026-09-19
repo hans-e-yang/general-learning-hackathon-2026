@@ -547,8 +547,8 @@ describe("/session/:uuid/material POST -> SSE pipeline (#14/#15)", () => {
     reader.cancel();
     expect(buf).toContain("event: material.accepted");
     expect(buf).toContain("event: extraction.update");
-    expect(buf).toContain('"label":"1"');
-    expect(buf).toContain("q-1");
+    expect(buf).toContain('"label":"1a"');
+    expect(buf).toContain("q-1a");
   });
 
   it("publishes capture.triaged and skips extraction for a redundant frame (#28)", async () => {
@@ -740,8 +740,8 @@ describe("/session/:uuid/material POST -> SSE pipeline (#14/#15)", () => {
     if (value) buf += dec.decode(value, { stream: true });
     reader.cancel();
     expect(buf).toContain("worksheet");
-    expect(buf).toContain("q-1");
-    expect(buf).toContain('"label":"1"');
+    expect(buf).toContain("q-1a");
+    expect(buf).toContain('"label":"1a"');
   });
 });
 

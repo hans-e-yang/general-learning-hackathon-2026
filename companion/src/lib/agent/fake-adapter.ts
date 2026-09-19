@@ -1,6 +1,6 @@
 import type { BoardAnnotationTurn } from "@/contracts/board";
 import { stableQuestionId } from "@/lib/questionIdentity";
-import { normalizeQuestionLabel } from "@/lib/questionLabel";
+import { composeQuestionLabels } from "@/lib/questionLabel";
 import { looksLikeFinalAnswer } from "./answer-guard";
 import type {
   AnnotateInput,
@@ -29,16 +29,16 @@ const HINT_LADDER = [
   "Walk me through each step. Do not yet write your final sentence.",
 ];
 
-/** Stable bank so later captures grow boards instead of colliding on q-p0-N. */
+/** Stable bank shaped like real worksheets (1a/1b, not flat 1/2/3). */
 const QUESTION_BANK: { label: string; text: string }[] = [
-  { label: "1", text: "Question 1. Describe the sample space for this experiment." },
-  { label: "2", text: "Question 2. Compute P(A ∪ B) given the information on the page." },
-  { label: "3", text: "Question 3. Are events A and B independent? Justify briefly." },
-  { label: "4", text: "Question 4. Find the conditional probability P(A|B)." },
-  { label: "5", text: "Question 5. State Bayes' theorem and identify each term." },
-  { label: "6", text: "Question 6. Give an example of mutually exclusive events." },
-  { label: "7", text: "Question 7. Compute the expected value of the discrete r.v." },
-  { label: "8", text: "Question 8. Sketch the cdf of the distribution on the sheet." },
+  { label: "1a", text: "Exercise 1\na) Describe the sample space for this experiment." },
+  { label: "1b", text: "b) Compute P(A ∪ B) given the information on the page." },
+  { label: "1c", text: "c) Are events A and B independent? Justify briefly." },
+  { label: "2", text: "Exercise 2. Find the conditional probability P(A|B)." },
+  { label: "2a", text: "Exercise 2\na) State Bayes' theorem and identify each term." },
+  { label: "2b", text: "b) Give an example of mutually exclusive events." },
+  { label: "3", text: "Exercise 3. Compute the expected value of the discrete r.v." },
+  { label: "3a", text: "Exercise 3\na) Sketch the cdf of the distribution on the sheet." },
 ];
 
 const TUTOR_SYSTEM =
@@ -130,7 +130,7 @@ export class FakeAdapter implements LLMAdapter {
     );
     return QUESTION_BANK.slice(start, start + windowSize).map((q, i) => {
       const index = start + i;
-      const label = normalizeQuestionLabel(q.label, index, q.text);
+      const label = composeQuestionLabels([{ label: q.label, text: q.text }])[0] ?? q.label;
       return {
         id: stableQuestionId(label, q.text),
         index,

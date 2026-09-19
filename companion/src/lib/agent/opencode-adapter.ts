@@ -11,7 +11,7 @@ import {
   type TutorTurn,
 } from "@/lib/contracts";
 import { stableQuestionId } from "@/lib/questionIdentity";
-import { normalizeQuestionLabel } from "@/lib/questionLabel";
+import { composeQuestionLabels } from "@/lib/questionLabel";
 import { looksLikeFinalAnswer } from "./answer-guard";
 import type {
   AnnotateInput,
@@ -180,8 +180,10 @@ const AnnotateResultSchema = z.object({
 const EXTRACT_SYSTEM = [
   "You extract exam questions from photos of student worksheets.",
   'Respond with strict JSON: {"questions":[{"label":"1a","text":"..."}]}.',
-  "Use the printed question number/letter as label (e.g. 1, 1a, 2b). Treat sub-parts as separate questions.",
-  "Transcribe each question faithfully in reading order; never answer, solve, or paraphrase.",
+  "Each sub-part is its own question. Labels MUST mirror the print:",
+  '- Exercise 1 with parts a) and b) → labels "1a" and "1b" (never bare "1","2","3" for those parts).',
+  '- A standalone "Question 2" → label "2".',
+  "Include enough text to identify the part; never answer or solve.",
   "If no question is legible, return an empty array.",
 ].join(" ");
 
@@ -342,9 +344,12 @@ export class OpenCodeAdapter implements LLMAdapter {
       { model: this.visionModel(), maxTokens: VISION_MAX_TOKENS },
       ExtractResultSchema
     );
+    const labels = composeQuestionLabels(
+      data.questions.map((q) => ({ label: q.label, text: q.text.trim() })),
+    );
     return data.questions.map((q, index) => {
       const text = q.text.trim();
-      const label = normalizeQuestionLabel(q.label, index, text);
+      const label = labels[index] ?? String(index + 1);
       return {
         id: stableQuestionId(label, text),
         index,
