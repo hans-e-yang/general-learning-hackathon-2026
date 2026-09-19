@@ -3,7 +3,7 @@
   "name": "Circlr Companion",
   "version": "0.1.0",
   "description": "Split-screen study companion: starts a Session and mounts the Companion beside the Document.",
-  "permissions": ["sidePanel", "tabs", "activeTab", "storage", "scripting"],
+  "permissions": ["sidePanel", "tabs", "activeTab", "storage", "alarms"],
   "host_permissions": ["<all_urls>"],
   "action": {
     "default_title": "Open Circlr Companion",
@@ -20,13 +20,6 @@
     "page": "options.html",
     "open_in_tab": false
   },
-  "content_scripts": [
-    {
-      "matches": ["<all_urls>"],
-      "js": ["content.js"],
-      "run_at": "document_idle"
-    }
-  ],
   "icons": {
     "128": "icons/circlr-128.png"
   }
