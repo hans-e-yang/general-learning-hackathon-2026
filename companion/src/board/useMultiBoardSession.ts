@@ -41,7 +41,9 @@ export type UseMultiBoardSessionOptions = {
 export function useMultiBoardSession({
   onStrokeEnd,
 }: UseMultiBoardSessionOptions = {}) {
-  const [questions, setQuestions] = useState<{ id: string }[]>([]);
+  const [questions, setQuestions] = useState<{ id: string; label: string }[]>(
+    [],
+  );
   const [boards, setBoards] = useState<BoardSlotMap>({});
   const [activeQuestionId, setActiveQuestionIdState] =
     useState<string | null>(null);
@@ -79,8 +81,8 @@ export function useMultiBoardSession({
   );
 
   const syncQuestions = useCallback(
-    (qs: { id: string }[]) => {
-      setQuestions(qs);
+    (qs: { id: string; label: string }[]) => {
+      setQuestions(qs.map((q) => ({ id: q.id, label: q.label })));
       setBoards((prev) => ensureBoardSlots(prev, qs));
       activateQuestion((prev) => pickActiveQuestionId(prev, qs));
     },
