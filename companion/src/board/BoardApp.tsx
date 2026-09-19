@@ -185,6 +185,7 @@ function BoardShell({ sessionUuid }: { sessionUuid: string }) {
         onEraserSizeChange={setEraserSize}
         shapeKind={shapeKind}
         onShapeKindChange={setShapeKind}
+        inspectHref={`/inspector?s=${encodeURIComponent(sessionUuid)}`}
       />
       <div className="board-status-row">
         <BoardJumpStrip
