@@ -4,6 +4,22 @@ import { BOARD_VIEWBOX } from "@/contracts/board";
 const JPEG_QUALITY = 0.85;
 const LINE_HEIGHT = 1.35;
 
+/** Matches SVG `preserveAspectRatio="xMidYMin meet"` on the Board surface. */
+export function svgMeetXMidYMin(
+  viewBox: { width: number; height: number },
+  viewport: { width: number; height: number },
+): { scale: number; offsetX: number; offsetY: number } {
+  const scale = Math.min(
+    viewport.width / viewBox.width,
+    viewport.height / viewBox.height,
+  );
+  return {
+    scale,
+    offsetX: (viewport.width - viewBox.width * scale) / 2,
+    offsetY: 0,
+  };
+}
+
 /**
  * Rasterize the board's draw order to a base64 JPEG (no data-URL prefix) so the
  * agent can see exactly what the student sees. Browser-only; returns "" during
@@ -13,27 +29,89 @@ export function renderBoardToJpeg(
   elements: readonly BoardElement[],
   scale = 1,
 ): string {
+  return rasterizeBoard(elements, {
+    width: BOARD_VIEWBOX.width * scale,
+    height: BOARD_VIEWBOX.height * scale,
+    pixelRatio: 1,
+    meet: false,
+  });
+}
+
+/**
+ * Rasterize onto a canvas the size of the on-screen Board surface, using the
+ * same xMidYMin meet mapping as the SVG so the PDF matches what the student sees.
+ */
+export function renderBoardViewportToJpeg(
+  elements: readonly BoardElement[],
+  viewport: { width: number; height: number },
+  pixelRatio = 1,
+): string {
+  return rasterizeBoard(elements, {
+    width: Math.max(1, viewport.width),
+    height: Math.max(1, viewport.height),
+    pixelRatio: Math.max(1, pixelRatio),
+    meet: true,
+  });
+}
+
+function rasterizeBoard(
+  elements: readonly BoardElement[],
+  opts: {
+    width: number;
+    height: number;
+    pixelRatio: number;
+    meet: boolean;
+  },
+): string {
   if (typeof document === "undefined") return "";
+  const { width: cssW, height: cssH, pixelRatio: dpr, meet } = opts;
   const canvas = document.createElement("canvas");
-  canvas.width = Math.round(BOARD_VIEWBOX.width * scale);
-  canvas.height = Math.round(BOARD_VIEWBOX.height * scale);
+  canvas.width = Math.round(cssW * dpr);
+  canvas.height = Math.round(cssH * dpr);
   const ctx = canvas.getContext("2d");
   if (!ctx) return "";
-  ctx.scale(scale, scale);
+
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.fillStyle = "#fffdf8";
-  ctx.fillRect(0, 0, BOARD_VIEWBOX.width, BOARD_VIEWBOX.height);
+  ctx.fillRect(0, 0, cssW, cssH);
+
+  if (meet) {
+    const { scale, offsetX, offsetY } = svgMeetXMidYMin(BOARD_VIEWBOX, {
+      width: cssW,
+      height: cssH,
+    });
+    ctx.setTransform(
+      dpr * scale,
+      0,
+      0,
+      dpr * scale,
+      dpr * offsetX,
+      dpr * offsetY,
+    );
+  } else {
+    const sx = cssW / BOARD_VIEWBOX.width;
+    const sy = cssH / BOARD_VIEWBOX.height;
+    ctx.setTransform(dpr * sx, 0, 0, dpr * sy, 0, 0);
+  }
+
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
+  paintBoard(ctx, elements);
 
+  const dataUrl = canvas.toDataURL("image/jpeg", JPEG_QUALITY);
+  const comma = dataUrl.indexOf(",");
+  return comma >= 0 ? dataUrl.slice(comma + 1) : "";
+}
+
+function paintBoard(
+  ctx: CanvasRenderingContext2D,
+  elements: readonly BoardElement[],
+): void {
   for (const el of elements) {
     if (el.tool === "pen") drawPen(ctx, el);
     else if (el.tool === "shape") drawShape(ctx, el);
     else if (el.tool === "text") drawText(ctx, el);
   }
-
-  const dataUrl = canvas.toDataURL("image/jpeg", JPEG_QUALITY);
-  const comma = dataUrl.indexOf(",");
-  return comma >= 0 ? dataUrl.slice(comma + 1) : "";
 }
 
 function drawPen(

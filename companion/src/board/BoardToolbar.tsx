@@ -41,6 +41,9 @@ type BoardToolbarProps = {
   onTutorInject?: () => void;
   /** Debug: link to the in-server capture/context inspector, opened in the same pane. */
   inspectHref?: string;
+  onDownload?: () => void;
+  downloadDisabled?: boolean;
+  downloadStatus?: "idle" | "busy" | "error";
 };
 
 export function BoardToolbar({
@@ -57,6 +60,9 @@ export function BoardToolbar({
   showTutorInject = false,
   onTutorInject,
   inspectHref,
+  onDownload,
+  downloadDisabled = false,
+  downloadStatus = "idle",
 }: BoardToolbarProps) {
   const selectedIndex = Math.max(
     0,
@@ -238,6 +244,21 @@ export function BoardToolbar({
         <span className="board-swatch tutor" aria-hidden="true" />
         <span>Tutor</span>
       </div>
+
+      <button
+        type="button"
+        className="board-download"
+        disabled={
+          downloadDisabled || downloadStatus === "busy" || !onDownload
+        }
+        onClick={onDownload}
+      >
+        {downloadStatus === "busy"
+          ? "Exporting…"
+          : downloadStatus === "error"
+            ? "Couldn’t export"
+            : "Download"}
+      </button>
 
       {inspectHref ? (
         <a className="board-inspect-link" href={inspectHref}>

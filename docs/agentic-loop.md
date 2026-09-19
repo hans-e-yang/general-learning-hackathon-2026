@@ -262,6 +262,11 @@ the snapshot was taken. (Spec story #12.)
    filename="circlr-<uuid>.pdf"`. The companion's drop layer is the
    extension's concern (#18).
 
+Board slide download is a separate, client-only path (spec
+`docs/superpowers/specs/2026-09-20-board-to-pdf-design.md`). The Board toolbar
+**Download** control rasterizes local student ink with `pdf-lib` and does not
+call this route. The worksheet text PDF above is unchanged.
+
 ### 7.8 Canvas turns and agent annotations
 
 The Board is the single shared canvas for the Session (CONTEXT.md). Lane B treats

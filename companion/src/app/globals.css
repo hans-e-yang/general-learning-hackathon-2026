@@ -232,6 +232,33 @@ body {
   cursor: pointer;
 }
 
+.board-download {
+  appearance: none;
+  border: 1px solid color-mix(in srgb, var(--focus) 35%, var(--paper-line));
+  background: transparent;
+  color: var(--focus);
+  font: inherit;
+  font-size: 0.72rem;
+  letter-spacing: 0.02em;
+  padding: 0.3rem 0.55rem;
+  border-radius: 0.3rem;
+  cursor: pointer;
+}
+
+.board-download:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--focus) 10%, var(--paper));
+}
+
+.board-download:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.board-download:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .board-inspect-link {
   appearance: none;
   border: 1px solid color-mix(in srgb, var(--focus) 35%, var(--paper-line));

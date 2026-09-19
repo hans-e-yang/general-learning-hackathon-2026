@@ -8,13 +8,14 @@ import {
   useSyncExternalStore,
 } from "react";
 import { BoardCarousel } from "@/board/BoardCarousel";
-import { renderBoardToJpeg } from "@/board/boardImage";
+import { renderBoardToJpeg, renderBoardViewportToJpeg } from "@/board/boardImage";
 import { BoardJumpStrip } from "@/board/BoardJumpStrip";
 import { BoardSurface } from "@/board/BoardSurface";
 import { BoardToolbar } from "@/board/BoardToolbar";
+import { buildBoardPdf, buildBoardPdfPages } from "@/board/exportPdf";
 import { neighborQuestionId } from "@/board/multiBoard";
 import { useMultiBoardSession } from "@/board/useMultiBoardSession";
-import type { BoardElement } from "@/contracts/board";
+import { BOARD_VIEWBOX, type BoardElement } from "@/contracts/board";
 import { normalizeQuestionLabel } from "@/lib/questionLabel";
 import { subscribeWorksheet } from "@/session/worksheetChannel";
 
@@ -117,6 +118,7 @@ function BoardShell({ sessionUuid }: { sessionUuid: string }) {
 
   const {
     questions,
+    boards,
     activeQuestionId,
     setActiveQuestionId,
     syncQuestions,
@@ -153,6 +155,62 @@ function BoardShell({ sessionUuid }: { sessionUuid: string }) {
     onIdle: annotateOnIdle,
   });
   const [captureProcessing, setCaptureProcessing] = useState(false);
+  const [downloadStatus, setDownloadStatus] = useState<
+    "idle" | "busy" | "error"
+  >("idle");
+  const downloadBusyRef = useRef(false);
+  const downloadResetRef = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined,
+  );
+  const stageRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    return () => {
+      if (downloadResetRef.current) clearTimeout(downloadResetRef.current);
+    };
+  }, []);
+
+  const exportBoards = useCallback(async () => {
+    if (questions.length === 0 || downloadBusyRef.current) return;
+    if (downloadResetRef.current) {
+      clearTimeout(downloadResetRef.current);
+      downloadResetRef.current = undefined;
+    }
+    downloadBusyRef.current = true;
+    setDownloadStatus("busy");
+    try {
+      const stage = stageRef.current;
+      const viewport = {
+        width: Math.max(1, stage?.clientWidth ?? BOARD_VIEWBOX.width),
+        height: Math.max(1, stage?.clientHeight ?? BOARD_VIEWBOX.height),
+      };
+      const pixelRatio =
+        typeof window !== "undefined"
+          ? Math.min(2, window.devicePixelRatio || 1)
+          : 1;
+      const pages = buildBoardPdfPages(questions, boards, (els) =>
+        renderBoardViewportToJpeg(els, viewport, pixelRatio),
+      );
+      const blob = await buildBoardPdf({ pages });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `circlr-boards-${sessionUuid}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      setDownloadStatus("idle");
+    } catch {
+      setDownloadStatus("error");
+      downloadResetRef.current = setTimeout(() => {
+        setDownloadStatus("idle");
+        downloadResetRef.current = undefined;
+      }, 2500);
+    } finally {
+      downloadBusyRef.current = false;
+    }
+  }, [boards, questions, sessionUuid]);
 
   useEffect(() => {
     let timeout: ReturnType<typeof setTimeout> | undefined;
@@ -261,6 +319,11 @@ function BoardShell({ sessionUuid }: { sessionUuid: string }) {
         shapeKind={shapeKind}
         onShapeKindChange={setShapeKind}
         inspectHref={`/inspector?s=${encodeURIComponent(sessionUuid)}`}
+        onDownload={() => {
+          void exportBoards();
+        }}
+        downloadDisabled={questions.length === 0}
+        downloadStatus={downloadStatus}
       />
       <div className="board-status-row">
         <BoardJumpStrip
@@ -325,7 +388,7 @@ function BoardShell({ sessionUuid }: { sessionUuid: string }) {
         empty={empty}
         processing={captureProcessing}
       >
-        <div className="board-stage">
+        <div className="board-stage" ref={stageRef}>
           <BoardSurface
             key={activeQuestionId ?? "empty"}
             elements={elements}

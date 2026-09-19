@@ -72,10 +72,10 @@ Used only by export so Tutor marks never reach the rasterizer. The on-screen Boa
 Given ordered `{ label, jpeg }[]` (JPEG bytes or base64 without a data-URL prefix):
 
 - Create a `pdf-lib` document.
-- One portrait page per entry.
-- Page size matches the Board plus header: **800 × 1240 pt** (40 pt header bar, 800 × 1200 Board frame — same aspect as `BOARD_VIEWBOX`).
+- One page per entry.
+- Page size follows the **on-screen Board surface** (plus a 40 pt header), not a fixed 800×1200 viewBox. Rasterize at the visible wrap size with the same SVG `xMidYMin meet` mapping; the PDF board area keeps that image’s aspect (longest edge 800 pt).
 - Header: question `label` left-aligned on a light bar, dark text, distinct from the white Board.
-- Embed the JPEG into the remaining 800 × 1200 frame, edge-to-edge.
+- Embed the JPEG edge-to-edge in the remaining frame.
 - Return a `Blob`.
 
 Runnable in Node tests without a browser canvas (tests pass fixture JPEGs).
