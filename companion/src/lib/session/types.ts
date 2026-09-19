@@ -1,4 +1,4 @@
-import type { BoardElement } from "@/contracts/board";
+import type { BoardElement, BoardTurn } from "@/contracts/board";
 import type { PromptMessage } from "@/lib/agent/llm-adapter";
 import type {
   AssessmentStatus,
@@ -7,8 +7,10 @@ import type {
   Mode,
   QuestionBlock,
   SseEvent,
+  TriageNovelty,
   TurnRequest,
   TutorTurn,
+  WatchVerdict,
 } from "@/lib/contracts";
 
 export const RECENT_HASH_LIMIT = 5;
@@ -26,15 +28,73 @@ export interface TurnMaterial {
   image?: string;
 }
 
-export interface TurnContext {
+interface ContextEntryBase {
   id: string;
   at: number;
   questionId?: string;
-  prompt: PromptMessage[];
+}
+
+/** A capture arrived from the extension (with the triage verdict on it). */
+export interface CaptureContextEntry extends ContextEntryBase {
+  kind: "capture";
+  captureId: string;
+  captureHash: string;
+  pageIndex: number;
+  image?: string;
+  triage?: { update: boolean; reason: string; novelty?: TriageNovelty };
+}
+
+/** Questions were extracted from a capture — the "question" side of the session. */
+export interface ExtractionContextEntry extends ContextEntryBase {
+  kind: "extraction";
+  partial: boolean;
+  questions: QuestionBlock[];
+}
+
+/** The student saved an answer, plus the Scout assessment of it. */
+export interface DraftContextEntry extends ContextEntryBase {
+  kind: "draft";
+  questionId: string;
+  draft: string;
+  questionText?: string;
+  assessment?: { status: AssessmentStatus; reasoning: string };
+}
+
+/** A tutor / idk turn: the full prompt, the material it used, and the AI output. */
+export interface TutorContextEntry extends ContextEntryBase {
+  kind: "tutor" | "idk";
   input: TurnContextInput;
+  prompt: PromptMessage[];
   material: TurnMaterial;
   output: TutorTurn;
 }
+
+/** The live watcher ran on a capture; the verdict is recorded whether or not it flagged. */
+export interface WatchContextEntry extends ContextEntryBase {
+  kind: "watch";
+  captureHash: string;
+  pageIndex: number;
+  verdict: WatchVerdict;
+}
+
+/** The student mutated the shared canvas. */
+export interface BoardContextEntry extends ContextEntryBase {
+  kind: "board";
+  turn: BoardTurn;
+}
+
+/**
+ * Append-only transcript of everything that happened in a Session, in order:
+ * captures, extracted questions, student answers, assessments, tutor turns,
+ * watcher verdicts, and canvas edits.
+ */
+export type ContextEntry =
+  | CaptureContextEntry
+  | ExtractionContextEntry
+  | DraftContextEntry
+  | TutorContextEntry
+  | WatchContextEntry
+  | BoardContextEntry;
 
 export interface CaptureMeta {
   captureId: string;
@@ -54,7 +114,7 @@ export interface SessionState {
   worksheet: QuestionBlock[];
   drafts: Record<string, string>;
   threads: Record<string, TutorTurn[]>;
-  context: TurnContext[];
+  context: ContextEntry[];
   board: BoardElement[];
   ghostCounts: Record<string, number>;
   ghostSummary: GhostSummaryEntry[];
