@@ -4,29 +4,19 @@
 // to the Companion app, so its own interactions (drawing, typing) work normally.
 //
 // Once live it does not talk to the host page directly — every message goes
-// panel → background → content script, per the spec's trust boundary.
+// panel → background, per the spec's trust boundary.
 const statusEl = document.getElementById("status");
 const fallbackEl = document.getElementById("fallback");
 const iframeEl = document.getElementById("companion");
 const retryBtn = document.getElementById("retry");
 const settingsBtn = document.getElementById("settings");
-// The Document tab is whatever the student has focused in the current window.
-async function activeTab() {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    return tab.id ?? 0;
-}
-// Session is live: mount the embed and kick off the first capture so the
-// panel → background → content ingest path is exercised immediately.
+// Session is live: mount the embed and tell the background to start capturing.
 function showSession(companionUrl) {
     fallbackEl.hidden = true;
     iframeEl.hidden = false;
     iframeEl.src = companionUrl;
-    // Tell the background we are live so it can start feeding captures end-to-end.
-    void (async () => {
-        const tabId = await activeTab();
-        const msg = { kind: "capture", tabId };
-        chrome.runtime.sendMessage(msg).catch(() => { });
-    })();
+    const msg = { kind: "capture" };
+    chrome.runtime.sendMessage(msg).catch(() => { });
 }
 // Backend down / no uuid: hide the embed and offer a retry instead of a dead frame.
 function showFallback(text) {
@@ -39,8 +29,7 @@ function showFallback(text) {
 async function ignite() {
     retryBtn.disabled = true;
     try {
-        const tabId = await activeTab();
-        const msg = { kind: "ignite", tabId };
+        const msg = { kind: "ignite" };
         const res = await chrome.runtime.sendMessage(msg);
         if (res.kind === "ignited" && res.uuid) {
             showSession(res.companionUrl);
@@ -66,5 +55,11 @@ chrome.runtime.onMessage.addListener((msg) => {
 retryBtn.addEventListener("click", () => void ignite());
 // Discoverable path to the backend URL setting from the fallback screen.
 settingsBtn.addEventListener("click", () => void chrome.runtime.openOptionsPage());
+// The panel closing tears this document down: tell the background to stop the
+// capture loop, keepalive, and watchdog. `stop` is idempotent.
+window.addEventListener("pagehide", () => {
+    const msg = { kind: "stop" };
+    chrome.runtime.sendMessage(msg).catch(() => { });
+});
 void ignite();
 export {};
