@@ -385,6 +385,21 @@ describe("opencode-adapter/annotate (canvas tools)", () => {
     expect(body.model).toBe("test-text");
   });
 
+  it("budgets enough tokens for the vision model when a canvas image is attached", async () => {
+    fetchMock.mockResolvedValueOnce(completion({ annotations: [] }));
+    await adapter().annotate({
+      questionId: "q1",
+      questionText: "x?",
+      board: [],
+      image: "Zm9vYmFy",
+    });
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    expect(body.model).toBe("test-vision");
+    // The vision model is a reasoning model; a small budget yields an empty
+    // completion (finish_reason=length) and no annotations.
+    expect(body.max_tokens).toBeGreaterThanOrEqual(6000);
+  });
+
   it("returns an empty list when the model proposes no marks", async () => {
     fetchMock.mockResolvedValueOnce(completion({ annotations: [] }));
     const turns = await adapter().annotate({ questionText: "x?", board: [] });

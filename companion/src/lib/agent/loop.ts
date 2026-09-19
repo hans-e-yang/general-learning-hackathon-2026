@@ -204,6 +204,11 @@ async function annotateBoard(
     turns = arrangeAnnotations(await adapter.annotate(input));
   } catch (err) {
     error = err instanceof Error ? err.message : String(err);
+    // Never break the tutor turn, but don't hide why no marks appeared.
+    console.error(
+      `[annotate] ${adapter.name} failed for question ${ctx.questionId ?? "(none)"}:`,
+      error,
+    );
   }
 
   const published: { type: string; elementId?: string }[] = [];

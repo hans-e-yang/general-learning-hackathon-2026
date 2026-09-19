@@ -534,9 +534,14 @@ export class OpenCodeAdapter implements LLMAdapter {
       { role: "system", content: ANNOTATE_SYSTEM },
       { role: "user", content: userContent(lines.join("\n\n"), input.image) },
     ];
+    // The vision model is a reasoning model; too small a budget is spent on
+    // hidden reasoning and returns empty content (finish_reason=length).
     const data = await this.jsonCall(
       messages,
-      { model: input.image ? this.visionModel() : this.textModel(), maxTokens: 500 },
+      {
+        model: input.image ? this.visionModel() : this.textModel(),
+        maxTokens: input.image ? VISION_MAX_TOKENS : 500,
+      },
       AnnotateResultSchema
     );
     input.onPrompt?.(toPromptMessages(messages));
