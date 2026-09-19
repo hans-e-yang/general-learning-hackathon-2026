@@ -158,6 +158,8 @@ describe("agent/loop extract (#14)", () => {
     for (const q of state!.worksheet) {
       expect(q.status).toBe("blocked");
       expect(q.id).toMatch(/^q-p0-/);
+      expect(q.label).toBeTruthy();
+      expect(typeof q.label).toBe("string");
     }
     const upd = events.find((e) => e.evt.type === "extraction.update");
     expect(upd).toBeDefined();

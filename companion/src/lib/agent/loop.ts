@@ -1,4 +1,5 @@
 import type { TurnRequest, WatchVerdict } from "@/lib/contracts";
+import { normalizeQuestionLabel } from "@/lib/questionLabel";
 import { publish } from "@/lib/session/bus";
 import { get, withLock } from "@/lib/session/store";
 import { SILENT_THRESHOLD, type GhostSummaryEntry } from "@/lib/session/types";
@@ -64,7 +65,13 @@ export async function extractFromCapture(
     let inserted = 0;
     for (const q of extracted) {
       if (!state.worksheet.find((w) => w.id === q.id)) {
-        state.worksheet.push({ ...q, status: "blocked" });
+        state.worksheet.push({
+          id: q.id,
+          index: q.index,
+          text: q.text,
+          label: normalizeQuestionLabel(q.label, q.index),
+          status: "blocked",
+        });
         inserted += 1;
       }
     }

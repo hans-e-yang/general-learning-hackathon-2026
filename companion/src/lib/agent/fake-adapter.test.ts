@@ -12,6 +12,10 @@ describe("fake-adapter/extract", () => {
       expect(q.id.startsWith("q-p0-")).toBe(true);
       expect(q.text.length).toBeGreaterThan(0);
     }
+    const qs = await fakeAdapter.extract({ captureHash: "0123456789abcdef", pageIndex: 0 });
+    for (const q of qs) {
+      expect(q.label.length).toBeGreaterThan(0);
+    }
   });
 
   it("yields distinct questions across pages", async () => {

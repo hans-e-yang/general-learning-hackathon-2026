@@ -42,6 +42,7 @@ export class FakeAdapter implements LLMAdapter {
   readonly name = "fake";
 
   async extract(input: ExtractInput): Promise<ExtractedQuestion[]> {
+    const SAMPLE_LABELS = ["1a", "1b", "1c", "2", "3"];
     const seed = hash32(`extract:${input.captureHash}:${input.pageIndex}`);
     const n = (seed % 3) + 1;
     const questions: ExtractedQuestion[] = [];
@@ -49,7 +50,12 @@ export class FakeAdapter implements LLMAdapter {
       const id = `q-p${input.pageIndex}-${i}`;
       const tag = input.captureHash.slice(0, 4);
       const text = `Question ${i + 1} on page ${input.pageIndex} (capture ${tag}…)`;
-      questions.push({ id, index: i, text });
+      questions.push({
+        id,
+        index: i,
+        text,
+        label: SAMPLE_LABELS[i] ?? String(i + 1),
+      });
     }
     return questions;
   }
