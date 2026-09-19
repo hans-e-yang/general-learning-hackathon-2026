@@ -203,9 +203,9 @@ data: <json>
    `assessment.tick`, and `tutor.turn` events from `/events`.
 
 Same-hash captures are deduped for `RECAPTURE_COOLDOWN_MS` (20s), then allowed
-again so a static PDF view can finish extracting trailing exercises. The
-extension also force-uploads about every 20s even when the frame looks
-unchanged.
+again. The extension never re-uploads an unchanged frame: every ~20s it sends a
+`GET /health` ping instead, so the cadence has a liveness signal without the
+duplicate JPEG or a re-extraction pass.
 
 ### 7.3 Student asks for a hint / reflection
 
@@ -395,9 +395,9 @@ TriageVerdict { update: boolean, reason: string, novelty?: "new-questions" | "ne
 - Adapter error on triage fails open (`update:true`) so ingestion never silently
   stops.
 
-Same perceptual hash may be re-ingested after `RECAPTURE_COOLDOWN_MS` so a
-static frame can retry extraction. The Chrome extension force-uploads on a
-fixed cadence even when Hamming dedupe would skip.
+Same perceptual hash may be re-ingested after `RECAPTURE_COOLDOWN_MS`. The
+Chrome extension does not force a duplicate upload, though: every ~20s it pings
+`GET /health` instead, so an unchanged frame is never re-POSTed.
 
 The SSE event always carries `captureId`, `update`, and `reason`; `novelty` is
 present when the triage model supplies it.

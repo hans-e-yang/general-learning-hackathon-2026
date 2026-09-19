@@ -5,11 +5,13 @@
 //   2. Panel {kind:"ignite"} → POST /session; reply with uuid + Companion URL.
 //   3. Panel {kind:"capture"} → the Companion is live; start the capture loop.
 //   4. Loop: every CAPTURE_INTERVAL_MS, screenshot the active tab →
-//      1280px JPEG → hash → dedupe → POST /material.
+//      1280px JPEG → hash → dedupe → POST /material; every FORCE_RECAPTURE_EVERY
+//      ticks it pings GET /health instead (no image re-upload).
 //
 // No detection: a screenshot fires on a fixed interval regardless of scroll,
 // page changes, focus, or content. The one filter kept is dedupe: a frame whose
-// hash is within Hamming <4 of a recent one is not re-uploaded.
+// hash is within Hamming <4 of a recent one is not re-uploaded. The periodic
+// healthcheck replaces the old force-recapture so a static frame is never resent.
 //
 // MV3 lifecycle: Chrome terminates an extension service worker after ~30s idle.
 // A `setInterval` does not count as activity and is lost when the worker dies,
@@ -19,11 +21,15 @@
 //     if it was terminated anyway.
 // The session uuid is rehydrated from chrome.storage.session, so a revived
 // worker can resume without waiting for the panel.
-import { companionUrl, hydrate, ingest, igniteSession, newSessionState } from "./session.js";
+import { companionUrl, healthCheck, hydrate, ingest, igniteSession, newSessionState } from "./session.js";
 import { HAMMING_THRESHOLD, isDuplicate, RECENT_HASH_LIMIT } from "./hash.js";
 import { processCapture } from "./capture-image.js";
 export const CAPTURE_INTERVAL_MS = 2_000;
-/** Every N ticks, upload even a near-duplicate frame so incomplete extracts can catch trailing exercises. */
+/**
+ * Every N ticks, ping GET /health instead of re-uploading a near-duplicate frame.
+ * A static page would otherwise re-POST the same JPEG; this keeps a liveness
+ * signal on the same cadence without the bytes or a re-extraction pass.
+ */
 export const FORCE_RECAPTURE_EVERY = 10;
 // MV3 keepalive/watchdog (see header). 20s < the 30s idle timeout; 0.5min is
 // chrome.alarms' minimum period.
@@ -89,6 +95,17 @@ async function captureActiveTab() {
     if (!capturing)
         return; // a stop may have landed while this was queued
     await hydrated; // restored uuid lets captures continue after a worker restart
+    captureTicks += 1;
+    // Every N ticks, ping the backend instead of re-uploading a near-duplicate
+    // frame. A static page would otherwise re-POST the same JPEG forever; the
+    // healthcheck keeps the liveness signal on the same cadence without the bytes.
+    if (captureTicks % FORCE_RECAPTURE_EVERY === 0) {
+        const reachable = await healthCheck();
+        console.log(reachable
+            ? "[capture] healthcheck ok"
+            : "[capture] healthcheck failed (backend unreachable?)");
+        return;
+    }
     let tab;
     try {
         [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
@@ -107,17 +124,10 @@ async function captureActiveTab() {
         return; // e.g. protected chrome:// pages can't be captured
     }
     const { image, hash } = await processCapture(raw);
-    captureTicks += 1;
-    const forceRecapture = captureTicks % FORCE_RECAPTURE_EVERY === 0;
     // Drop near-identical frames so a static page does not re-upload every tick.
-    // Periodically force a pass anyway — vision extract can miss trailing exercises
-    // on the first look, and a frozen PDF view would otherwise never retry.
-    if (!forceRecapture && isDuplicate(hash, recentHashes, HAMMING_THRESHOLD)) {
+    if (isDuplicate(hash, recentHashes, HAMMING_THRESHOLD)) {
         console.log("[capture] duplicate frame; skipping upload");
         return;
-    }
-    if (forceRecapture) {
-        console.log("[capture] forced re-upload for extract catch-up");
     }
     recentHashes.push(hash);
     if (recentHashes.length > RECENT_HASH_LIMIT)

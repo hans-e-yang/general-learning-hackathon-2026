@@ -97,6 +97,18 @@ export function companionUrl(uuid) {
         return uuid ? `${baseUrl}/?s=${uuid}` : baseUrl;
     })();
 }
+// Cheap liveness ping for the periodic force tick. Static frames are never
+// re-uploaded, so the interval that used to force a duplicate capture now just
+// proves the backend is still reachable. No uuid needed.
+export async function healthCheck() {
+    const baseUrl = await getBackendUrl();
+    try {
+        return (await fetch(`${baseUrl}/health`)).ok;
+    }
+    catch {
+        return false;
+    }
+}
 // Single definition of the Capture ingest call, shared by flush and live ingest.
 function postMaterial(baseUrl, uuid, payload) {
     return fetch(`${baseUrl}/session/${uuid}/material`, {

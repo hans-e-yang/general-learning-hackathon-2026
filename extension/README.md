@@ -97,8 +97,9 @@ each capture appears in the panel as it is uploaded; you can also open
 average-hash fingerprint → dedupe → `POST /material`. There is no scroll / page /
 focus detection — every tick is captured, and a frame whose 16-hex average hash
 is within Hamming <4 of the rolling last-32 is skipped rather than re-uploaded.
-Protected pages (`chrome://…`) skip the tick. Captures are serialized so uploads
-stay ordered.
+Every `FORCE_RECAPTURE_EVERY` ticks (~20s) the loop instead pings `GET /health`,
+so a static page is never re-uploaded. Protected pages (`chrome://…`) skip the
+tick. Captures are serialized so uploads stay ordered.
 
 The loop starts when the panel reports the Companion is live. To survive the
 MV3 ~30s idle kill, a cheap `chrome.runtime.getPlatformInfo()` call every
