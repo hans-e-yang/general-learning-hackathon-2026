@@ -180,6 +180,8 @@ export type BoardElementEvent = {
 export type BoardAnnotateEvent = {
   type: "board.annotate";
   questionId: string;
+  /** solid = complete correct work; blocked = this pass is replacing error marks. */
+  status?: "solid" | "blocked";
 };
 
 export type BoardRemoveEvent = {

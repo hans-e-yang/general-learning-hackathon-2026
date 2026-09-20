@@ -20,19 +20,20 @@ import {
   type SessionState,
   type TurnMaterial,
 } from "@/lib/session/types";
-import { arrangeAnnotations } from "./annotate-layout";
+import { arrangeAnnotations, mapAnnotationsFromCrop } from "./annotate-layout";
 import { getAdapter } from "./index";
-import type {
-  AnnotateInput,
-  ExtractInput,
-  IdkInput,
-  LLMAdapter,
-  PromptMessage,
-  ScoutInput,
-  TriageInput,
-  TutorInput,
-  TutorTurn,
-  WatchInput,
+import {
+  normalizeAnnotateOutput,
+  type AnnotateInput,
+  type ExtractInput,
+  type IdkInput,
+  type LLMAdapter,
+  type PromptMessage,
+  type ScoutInput,
+  type TriageInput,
+  type TutorInput,
+  type TutorTurn,
+  type WatchInput,
 } from "./llm-adapter";
 
 const MIN_LEVEL = 0;
@@ -87,6 +88,14 @@ function buildMaterial(
     pageIndex: opts.pageIndex ?? capture?.pageIndex,
     image: opts.image ?? capture?.image,
   };
+}
+
+function lastDocumentImage(state: SessionState): string | undefined {
+  for (let i = state.captures.length - 1; i >= 0; i -= 1) {
+    const image = state.captures[i]?.image;
+    if (image) return image;
+  }
+  return undefined;
 }
 
 type ContextEntryDraft =
@@ -185,6 +194,9 @@ async function annotateBoard(
     message?: string;
     captureHash?: string;
     image?: string;
+    documentImage?: string;
+    crop?: { x: number; y: number; width: number; height: number };
+    transcript?: string;
   },
   trigger: AnnotationTrigger,
   sourceId?: string
@@ -193,15 +205,24 @@ async function annotateBoard(
   let prompt: PromptMessage[] = [];
   const input: AnnotateInput = {
     ...ctx,
+    documentImage: ctx.documentImage ?? lastDocumentImage(state),
     board: state.board,
     onPrompt: (messages) => {
       prompt = messages;
     },
   };
   let turns: BoardAnnotationTurn[] = [];
+  let status: "solid" | "incomplete" | "blocked" = "incomplete";
   let error: string | undefined;
   try {
-    turns = arrangeAnnotations(await adapter.annotate(input));
+    const result = normalizeAnnotateOutput(await adapter.annotate(input));
+    status = result.status;
+    const mapped = arrangeAnnotations(
+      mapAnnotationsFromCrop(result.annotations, ctx.crop),
+    );
+    // solid is status-only: never write marks on a complete correct answer.
+    turns = status === "solid" ? [] : mapped;
+    if (turns.length > 0) status = "blocked";
   } catch (err) {
     error = err instanceof Error ? err.message : String(err);
     // Never break the tutor turn, but don't hide why no marks appeared.
@@ -212,32 +233,43 @@ async function annotateBoard(
   }
 
   const published: { type: string; elementId?: string }[] = [];
-  if (!error) {
+  const isSolid = !error && status === "solid";
+  const hasMarks = !error && turns.length > 0;
+  // An empty incomplete pass must not wipe marks already on the board: the
+  // vision model often returns [] on messy handwriting, and a later idle tick
+  // would make annotations appear to flicker on and off. A solid verdict is
+  // conclusive — clear stale error rings so the client can show "Looks solid".
+  if (isSolid || hasMarks) {
     // Replace the agent's prior marks so repeated snapshots don't pile up.
     state.board = state.board.filter((el) => el.author !== "tutor");
     if (ctx.questionId) {
       publishEvent(uuid, {
         type: "board.annotate",
-        data: { questionId: ctx.questionId },
+        data: {
+          questionId: ctx.questionId,
+          status: isSolid ? "solid" : "blocked",
+        },
       });
       published.push({ type: "board.annotate" });
     }
 
-    for (const raw of turns) {
-      const turn = asBoardAnnotationTurn(raw);
-      if (!turn) continue;
-      const before = state.board.length;
-      state.board = applyBoardTurn(state.board, turn);
-      const element = state.board[state.board.length - 1];
-      if (state.board.length > before && element) {
-        publishEvent(uuid, {
-          type: "board.element",
-          data: {
-            element,
-            ...(ctx.questionId ? { questionId: ctx.questionId } : {}),
-          },
-        });
-        published.push({ type: "board.element", elementId: element.id });
+    if (hasMarks) {
+      for (const raw of turns) {
+        const turn = asBoardAnnotationTurn(raw);
+        if (!turn) continue;
+        const before = state.board.length;
+        state.board = applyBoardTurn(state.board, turn);
+        const element = state.board[state.board.length - 1];
+        if (state.board.length > before && element) {
+          publishEvent(uuid, {
+            type: "board.element",
+            data: {
+              element,
+              ...(ctx.questionId ? { questionId: ctx.questionId } : {}),
+            },
+          });
+          published.push({ type: "board.element", elementId: element.id });
+        }
       }
     }
   }
@@ -458,6 +490,7 @@ export async function watchOnCapture(
       threadHistory: thread,
       currentLevel: prevLevel,
       captureHash,
+      documentImage: lastDocumentImage(state),
       onPrompt: (messages) => {
         prompt = messages;
       },
@@ -595,6 +628,7 @@ export async function processTurn(uuid: string, turn: TurnRequest): Promise<void
               ? state.captures[state.captures.length - 1].hash
               : undefined,
           image: turn.image,
+          documentImage: lastDocumentImage(state),
           onPrompt: (messages) => {
             prompt = messages;
           },
@@ -695,6 +729,7 @@ export async function processTurn(uuid: string, turn: TurnRequest): Promise<void
           currentLevel: nextLevel(thread, 0),
           captureHash: lastCapture?.hash,
           image: turn.image,
+          documentImage: lastDocumentImage(state),
           onPrompt: (messages) => {
             prompt = messages;
           },
@@ -748,6 +783,7 @@ export async function processTurn(uuid: string, turn: TurnRequest): Promise<void
               ? state.captures[state.captures.length - 1].hash
               : undefined,
           image: turn.image,
+          documentImage: lastDocumentImage(state),
           onPrompt: (messages) => {
             prompt = messages;
           },
@@ -838,6 +874,8 @@ export async function processTurn(uuid: string, turn: TurnRequest): Promise<void
             draftText: state.drafts[turn.questionId],
             captureHash: lastCapture?.hash,
             image: turn.image,
+            crop: turn.crop,
+            transcript: turn.transcript,
           },
           "idle",
           snapshotId

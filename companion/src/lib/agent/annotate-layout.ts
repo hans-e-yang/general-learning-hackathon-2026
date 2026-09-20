@@ -11,7 +11,72 @@ const EDGE_PAD = 8;
 /** Tutor comments carry a sentence of reasoning, so they get more room. */
 const COMMENT_WIDTH = 280;
 
-type Rect = { x: number; y: number; width: number; height: number };
+export type AnnotateCrop = { x: number; y: number; width: number; height: number };
+
+type Rect = AnnotateCrop;
+
+function isFullBoard(crop: AnnotateCrop): boolean {
+  return (
+    crop.x === 0 &&
+    crop.y === 0 &&
+    crop.width === BOARD_VIEWBOX.width &&
+    crop.height === BOARD_VIEWBOX.height
+  );
+}
+
+function mapX(x: number, crop: AnnotateCrop): number {
+  return crop.x + (x / BOARD_VIEWBOX.width) * crop.width;
+}
+
+function mapY(y: number, crop: AnnotateCrop): number {
+  return crop.y + (y / BOARD_VIEWBOX.height) * crop.height;
+}
+
+/**
+ * The idle snapshot stretches student work to fill the 800x1200 JPEG so the
+ * vision model can read handwriting and typed math. Map those image-space
+ * marks back onto the real board before we park the comment beside the ring.
+ */
+export function mapAnnotationsFromCrop(
+  turns: readonly BoardAnnotationTurn[],
+  crop?: AnnotateCrop,
+): BoardAnnotationTurn[] {
+  if (!crop || isFullBoard(crop)) return [...turns];
+  return turns.map((turn): BoardAnnotationTurn => {
+    if (turn.kind === "board-shape") {
+      return {
+        ...turn,
+        element: {
+          ...turn.element,
+          x: mapX(turn.element.x, crop),
+          y: mapY(turn.element.y, crop),
+          width: (turn.element.width / BOARD_VIEWBOX.width) * crop.width,
+          height: (turn.element.height / BOARD_VIEWBOX.height) * crop.height,
+        },
+      };
+    }
+    if (turn.kind === "board-text") {
+      return {
+        ...turn,
+        element: {
+          ...turn.element,
+          x: mapX(turn.element.x, crop),
+          y: mapY(turn.element.y, crop),
+        },
+      };
+    }
+    return {
+      ...turn,
+      element: {
+        ...turn.element,
+        points: turn.element.points.map((p) => ({
+          x: mapX(p.x, crop),
+          y: mapY(p.y, crop),
+        })),
+      },
+    };
+  });
+}
 
 function shapeRect(shape: BoardShapeTurn["element"]): Rect {
   return {

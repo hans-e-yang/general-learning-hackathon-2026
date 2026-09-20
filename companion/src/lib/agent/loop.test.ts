@@ -628,6 +628,200 @@ describe("agent/loop canvas", () => {
     ).toBe("q1");
   });
 
+  it("maps idle annotations from the zoomed crop back onto the board", async () => {
+    const IMG = "data:image/jpeg;base64,/9j/AAAA";
+    const { publisher } = capture();
+    configureAgentLoop({
+      adapter: stubAdapter({
+        annotate: async (input) => {
+          expect(input.transcript).toBe("= 0.1+0.2+0=0.4");
+          return [
+            {
+              kind: "board-shape",
+              element: {
+                id: "tutor-ring",
+                author: "tutor",
+                shape: "ellipse",
+                x: 0,
+                y: 0,
+                width: 800,
+                height: 1200,
+              },
+            },
+          ];
+        },
+      }),
+      publishEvent: publisher,
+    });
+    seedSession("u1", {
+      worksheet: [{ id: "q1", index: 0, text: "x?", status: "blocked" }],
+    });
+
+    await processTurn("u1", {
+      kind: "annotate",
+      questionId: "q1",
+      image: IMG,
+      crop: { x: 80, y: 40, width: 400, height: 200 },
+      transcript: "= 0.1+0.2+0=0.4",
+    });
+
+    const ring = get("u1")!.board.find((el) => el.id === "tutor-ring");
+    expect(ring).toMatchObject({
+      tool: "shape",
+      x: 80,
+      y: 40,
+      width: 400,
+      height: 200,
+    });
+  });
+
+  it("threads the printed-page capture into annotate as documentImage", async () => {
+    const BOARD = "data:image/jpeg;base64,/9j/BBBB";
+    const PAGE = "data:image/jpeg;base64,/9j/PAGE";
+    const seen: Array<string | undefined> = [];
+    const { publisher } = capture();
+    configureAgentLoop({
+      adapter: stubAdapter({
+        annotate: async (input) => {
+          seen.push(input.documentImage);
+          return [];
+        },
+      }),
+      publishEvent: publisher,
+    });
+    seedSession("u1", {
+      worksheet: [{ id: "q1", index: 0, text: "x?", status: "blocked" }],
+      captures: [
+        {
+          captureId: "c1",
+          pageIndex: 0,
+          hash: "aabbccddeeff0011",
+          timestamp: 1,
+          deduped: false,
+          image: PAGE,
+        },
+      ],
+    });
+
+    await processTurn("u1", { kind: "annotate", questionId: "q1", image: BOARD });
+    expect(seen).toEqual([PAGE]);
+  });
+
+  it("publishes solid on board.annotate and does not treat a correct pass as an error", async () => {
+    const IMG = "data:image/jpeg;base64,/9j/AAAA";
+    const { events, publisher } = capture();
+    configureAgentLoop({
+      adapter: stubAdapter({
+        annotate: async () => ({ status: "solid", annotations: [] }),
+      }),
+      publishEvent: publisher,
+    });
+    seedSession("u1", {
+      worksheet: [{ id: "q1", index: 0, text: "x?", status: "blocked" }],
+      board: [
+        {
+          id: "stale-tutor",
+          tool: "text",
+          author: "tutor",
+          x: 0,
+          y: 0,
+          source: "old mark",
+          color: "#b85c38",
+          width: 180,
+          fontSize: 16,
+        },
+        {
+          id: "student-1",
+          tool: "pen",
+          author: "student",
+          points: [{ x: 0, y: 0 }],
+          color: "#1a1a1a",
+          strokeWidth: 2,
+        },
+      ],
+    });
+
+    await processTurn("u1", { kind: "annotate", questionId: "q1", image: IMG });
+
+    const evt = events.find((e) => e.evt.type === "board.annotate");
+    expect(evt?.evt).toEqual({
+      type: "board.annotate",
+      data: { questionId: "q1", status: "solid" },
+    });
+    expect(events.map((e) => e.evt.type)).not.toContain("board.element");
+    expect(get("u1")!.board.some((el) => el.id === "stale-tutor")).toBe(false);
+    expect(get("u1")!.board.some((el) => el.id === "student-1")).toBe(true);
+  });
+
+  it("publishes blocked on board.annotate when the work has an error", async () => {
+    const IMG = "data:image/jpeg;base64,/9j/AAAA";
+    const { events, publisher } = capture();
+    configureAgentLoop({
+      adapter: stubAdapter({
+        annotate: async () => ({
+          status: "blocked",
+          annotations: [
+            {
+              kind: "board-text",
+              element: {
+                id: "tutor-1",
+                author: "tutor",
+                x: 4,
+                y: 8,
+                source: "re-check this total",
+              },
+            },
+          ],
+        }),
+      }),
+      publishEvent: publisher,
+    });
+    seedSession("u1", {
+      worksheet: [{ id: "q1", index: 0, text: "x?", status: "blocked" }],
+    });
+
+    await processTurn("u1", { kind: "annotate", questionId: "q1", image: IMG });
+
+    const evt = events.find((e) => e.evt.type === "board.annotate");
+    expect(
+      evt?.evt.type === "board.annotate" ? evt.evt.data : undefined,
+    ).toEqual({ questionId: "q1", status: "blocked" });
+    expect(events.map((e) => e.evt.type)).toContain("board.element");
+    expect(get("u1")!.board.some((el) => el.id === "tutor-1")).toBe(true);
+  });
+
+  it("keeps existing tutor marks when a later idle pass finds nothing", async () => {
+    const IMG = "data:image/jpeg;base64,/9j/AAAA";
+    const { events, publisher } = capture();
+    configureAgentLoop({
+      adapter: stubAdapter({
+        annotate: async () => [],
+      }),
+      publishEvent: publisher,
+    });
+    seedSession("u1", {
+      worksheet: [{ id: "q1", index: 0, text: "x?", status: "blocked" }],
+      board: [
+        {
+          id: "kept-tutor",
+          tool: "text",
+          author: "tutor",
+          x: 4,
+          y: 8,
+          source: "re-check this total",
+          color: "#b85c38",
+          width: 180,
+          fontSize: 16,
+        },
+      ],
+    });
+
+    await processTurn("u1", { kind: "annotate", questionId: "q1", image: IMG });
+
+    expect(get("u1")!.board.some((el) => el.id === "kept-tutor")).toBe(true);
+    expect(events.map((e) => e.evt.type)).not.toContain("board.annotate");
+  });
+
   it("dismissAnnotation clears tutor marks and keeps student ink", async () => {
     const { events, publisher } = capture();
     configureAgentLoop({ adapter: fakeAdapter, publishEvent: publisher });

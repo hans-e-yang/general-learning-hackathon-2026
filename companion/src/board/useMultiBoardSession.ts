@@ -16,6 +16,11 @@ import {
   removeBoardSlot,
   type BoardSlotMap,
 } from "@/board/multiBoard";
+import { isBoardDirty, markBoardAnnotated } from "@/board/idleAnnotate";
+import {
+  reduceBoardWorkStatus,
+  type BoardWorkStatus,
+} from "@/board/workStatus";
 import { renderMathText } from "@/board/mathText";
 import type {
   BoardElement,
@@ -96,11 +101,18 @@ export function useMultiBoardSession({
   const [livePoints, setLivePoints] = useState<BoardPoint[] | null>(null);
   /** Bumped only by student ink; agent marks must not restart the idle timer. */
   const [revision, setRevision] = useState(0);
+  /** Per-question annotate verdict: solid only until the student revises. */
+  const [workStatus, setWorkStatus] = useState<
+    Record<string, BoardWorkStatus | undefined>
+  >({});
+  /** Re-run the idle watch after an in-flight pass so a skipped board is retried. */
+  const [idleEpoch, setIdleEpoch] = useState(0);
   /** Pages the student deleted; filtered from every later worksheet sync. */
   const deletedIdsRef = useRef<Set<string>>(new Set());
   const elementsRef = useRef<BoardElement[]>([]);
   const activeQuestionIdRef = useRef<string | null>(null);
-  const lastAnnotatedRevisionRef = useRef<number | null>(null);
+  const boardRevisionRef = useRef<Record<string, number>>({});
+  const lastAnnotatedRef = useRef<Record<string, number>>({});
   const annotatingRef = useRef(false);
 
   const channel = useMemo(
@@ -116,6 +128,13 @@ export function useMultiBoardSession({
     return channel.subscribe((event) => {
       if (event.type === "board.annotate") {
         setBoards((prev) => clearTutorMarks(prev, event.questionId));
+        setWorkStatus((prev) => ({
+          ...prev,
+          [event.questionId]: reduceBoardWorkStatus(prev[event.questionId], {
+            type: "annotate",
+            status: event.status,
+          }),
+        }));
         return;
       }
       if (event.type !== "board.element") return;
@@ -148,30 +167,47 @@ export function useMultiBoardSession({
   /**
    * Idle watch: after the student stops editing the active board, hand the
    * snapshot to `onIdle` (which ships it to the agent). Student revisions
-   * restart the clock; agent marks do not, so this cannot loop.
+   * restart the clock; agent marks do not, so this cannot loop. A pass already
+   * in flight must not drop the newer revision — `idleEpoch` retries it.
    */
   useEffect(() => {
     if (!onIdle || activeQuestionId === null) return;
-    if (revision === 0) return;
-    if (lastAnnotatedRevisionRef.current === revision) return;
+    const boardRevision = boardRevisionRef.current[activeQuestionId];
+    if (!isBoardDirty(lastAnnotatedRef.current, activeQuestionId, boardRevision)) {
+      return;
+    }
     const timer = setTimeout(() => {
-      if (lastAnnotatedRevisionRef.current === revision) return;
-      if (annotatingRef.current) return;
       const questionId = activeQuestionIdRef.current;
+      if (questionId === null) return;
+      const sentRevision = boardRevisionRef.current[questionId];
+      if (!isBoardDirty(lastAnnotatedRef.current, questionId, sentRevision)) return;
+      if (annotatingRef.current) return;
       const snapshot = elementsRef.current;
-      if (questionId === null || snapshot.length === 0) return;
-      lastAnnotatedRevisionRef.current = revision;
+      if (sentRevision === undefined) return;
+      if (snapshot.length === 0) {
+        lastAnnotatedRef.current = markBoardAnnotated(
+          lastAnnotatedRef.current,
+          questionId,
+          sentRevision,
+        );
+        return;
+      }
       annotatingRef.current = true;
       Promise.resolve(onIdle({ questionId, elements: snapshot }))
-        .catch(() => {
-          lastAnnotatedRevisionRef.current = null;
+        .then(() => {
+          lastAnnotatedRef.current = markBoardAnnotated(
+            lastAnnotatedRef.current,
+            questionId,
+            sentRevision,
+          );
         })
         .finally(() => {
           annotatingRef.current = false;
+          setIdleEpoch((n) => n + 1);
         });
     }, idleMs);
     return () => clearTimeout(timer);
-  }, [onIdle, activeQuestionId, revision, idleMs]);
+  }, [onIdle, activeQuestionId, revision, idleMs, idleEpoch]);
 
   /** Switch active board; clears in-flight gesture and selection when id changes. */
   const activateQuestion = useCallback(
@@ -238,7 +274,17 @@ export function useMultiBoardSession({
         const current = prev[activeQuestionId] ?? [];
         return { ...prev, [activeQuestionId]: updater(current) };
       });
-      setRevision((r) => r + 1);
+      setRevision((r) => {
+        const next = r + 1;
+        boardRevisionRef.current[activeQuestionId] = next;
+        return next;
+      });
+      setWorkStatus((prev) => {
+        const current = prev[activeQuestionId];
+        const next = reduceBoardWorkStatus(current, { type: "revise" });
+        if (next === current) return prev;
+        return { ...prev, [activeQuestionId]: next };
+      });
     },
     [activeQuestionId],
   );
@@ -491,6 +537,7 @@ export function useMultiBoardSession({
     moveSelection,
     injectTutorElement,
     dismissTutorMarks,
+    workStatus,
     channelMode: channel?.mode ?? ("stub" as const),
   };
 }

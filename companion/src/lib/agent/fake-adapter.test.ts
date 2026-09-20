@@ -295,7 +295,7 @@ describe("fake-adapter/tutor", () => {
 
 describe("fake-adapter/annotate", () => {
   it("rings the error and adds a tutor comment for a scene", async () => {
-    const turns = await fakeAdapter.annotate({
+    const { annotations: turns } = await fakeAdapter.annotate({
       questionId: "q1",
       questionText: "Why does sin(x)/x approach 1?",
       board: [],
@@ -312,7 +312,7 @@ describe("fake-adapter/annotate", () => {
   });
 
   it("writes detailed reasoning, not a bare 'check this step'", async () => {
-    const [ring, note] = await fakeAdapter.annotate({
+    const { annotations: [ring, note] } = await fakeAdapter.annotate({
       questionId: "q1",
       questionText: "Find the derivative of f(x) = x^2 sin x.",
       draftText: "f'(x) = 2x sin x",
@@ -332,7 +332,27 @@ describe("fake-adapter/annotate", () => {
   });
 
   it("returns no marks for an empty canvas with no question or hint", async () => {
-    expect(await fakeAdapter.annotate({ board: [] })).toEqual([]);
+    expect(await fakeAdapter.annotate({ board: [] })).toEqual({
+      status: "incomplete",
+      annotations: [],
+    });
+  });
+
+  it("returns incomplete with no marks for an empty canvas", async () => {
+    expect(await fakeAdapter.annotate({ board: [] })).toEqual({
+      status: "incomplete",
+      annotations: [],
+    });
+  });
+
+  it("returns blocked with marks for a scene so the demo still rings errors", async () => {
+    const result = await fakeAdapter.annotate({
+      questionId: "q1",
+      questionText: "Why does sin(x)/x approach 1?",
+      board: [],
+    });
+    expect(result).toMatchObject({ status: "blocked" });
+    expect("annotations" in result && result.annotations.length).toBe(2);
   });
 });
 

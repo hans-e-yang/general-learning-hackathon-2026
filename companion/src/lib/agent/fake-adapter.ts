@@ -1,9 +1,10 @@
-import type { BoardAnnotationTurn, BoardElement } from "@/contracts/board";
+import type { BoardElement } from "@/contracts/board";
 import { stableQuestionId } from "@/lib/questionIdentity";
 import { composeQuestionLabels } from "@/lib/questionLabel";
 import { looksLikeFinalAnswer } from "./answer-guard";
 import type {
   AnnotateInput,
+  AnnotateResult,
   AssessmentStatus,
   ExtractInput,
   ExtractedQuestion,
@@ -246,7 +247,7 @@ export class FakeAdapter implements LLMAdapter {
     };
   }
 
-  async annotate(input: AnnotateInput): Promise<BoardAnnotationTurn[]> {
+  async annotate(input: AnnotateInput): Promise<AnnotateResult> {
     input.onPrompt?.(
       promptPair(
         ANNOTATE_SYSTEM,
@@ -255,34 +256,37 @@ export class FakeAdapter implements LLMAdapter {
       )
     );
     const hasScene = Boolean(input.questionText || input.hint || input.board.length > 0);
-    if (!hasScene) return [];
+    if (!hasScene) return { status: "incomplete", annotations: [] };
     const seed = hash32(`${input.questionId ?? ""}:${input.hint ?? ""}`);
     const target = pickTargetRect(input.board);
     const pad = 14;
-    return [
-      {
-        kind: "board-shape",
-        element: {
-          id: `tutor-ring-${seed}`,
-          author: "tutor",
-          shape: "ellipse",
-          x: target.x - pad,
-          y: target.y - pad,
-          width: target.width + pad * 2,
-          height: target.height + pad * 2,
+    return {
+      status: "blocked",
+      annotations: [
+        {
+          kind: "board-shape",
+          element: {
+            id: `tutor-ring-${seed}`,
+            author: "tutor",
+            shape: "ellipse",
+            x: target.x - pad,
+            y: target.y - pad,
+            width: target.width + pad * 2,
+            height: target.height + pad * 2,
+          },
         },
-      },
-      {
-        kind: "board-text",
-        element: {
-          id: `tutor-note-${seed}`,
-          author: "tutor",
-          x: target.x + target.width + 18,
-          y: target.y,
-          source: reasoningComment(input),
+        {
+          kind: "board-text",
+          element: {
+            id: `tutor-note-${seed}`,
+            author: "tutor",
+            x: target.x + target.width + 18,
+            y: target.y,
+            source: reasoningComment(input),
+          },
         },
-      },
-    ];
+      ],
+    };
   }
 }
 

@@ -28,12 +28,14 @@ export function svgMeetXMidYMin(
 export function renderBoardToJpeg(
   elements: readonly BoardElement[],
   scale = 1,
+  crop?: { x: number; y: number; width: number; height: number },
 ): string {
   return rasterizeBoard(elements, {
     width: BOARD_VIEWBOX.width * scale,
     height: BOARD_VIEWBOX.height * scale,
     pixelRatio: 1,
     meet: false,
+    crop,
   });
 }
 
@@ -61,10 +63,11 @@ function rasterizeBoard(
     height: number;
     pixelRatio: number;
     meet: boolean;
+    crop?: { x: number; y: number; width: number; height: number };
   },
 ): string {
   if (typeof document === "undefined") return "";
-  const { width: cssW, height: cssH, pixelRatio: dpr, meet } = opts;
+  const { width: cssW, height: cssH, pixelRatio: dpr, meet, crop } = opts;
   const canvas = document.createElement("canvas");
   canvas.width = Math.round(cssW * dpr);
   canvas.height = Math.round(cssH * dpr);
@@ -89,9 +92,17 @@ function rasterizeBoard(
       dpr * offsetY,
     );
   } else {
-    const sx = cssW / BOARD_VIEWBOX.width;
-    const sy = cssH / BOARD_VIEWBOX.height;
-    ctx.setTransform(dpr * sx, 0, 0, dpr * sy, 0, 0);
+    const src = crop ?? BOARD_VIEWBOX;
+    const sx = cssW / src.width;
+    const sy = cssH / src.height;
+    ctx.setTransform(
+      dpr * sx,
+      0,
+      0,
+      dpr * sy,
+      -dpr * sx * src.x,
+      -dpr * sy * src.y,
+    );
   }
 
   ctx.lineCap = "round";
