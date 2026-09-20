@@ -15,6 +15,7 @@ import { composeQuestionLabels } from "@/lib/questionLabel";
 import { looksLikeFinalAnswer } from "./answer-guard";
 import type {
   AnnotateInput,
+  AnnotateResult,
   ExtractInput,
   IdkInput,
   LLMAdapter,
@@ -80,11 +81,18 @@ function toDataUrl(base64Jpeg: string): string {
   return `data:image/jpeg;base64,${base64Jpeg}`;
 }
 
-function userContent(instruction: string, image?: string): string | ContentPart[] {
-  if (!image) return instruction;
+function userContent(
+  instruction: string,
+  ...images: Array<string | undefined>
+): string | ContentPart[] {
+  const urls = images.filter((img): img is string => Boolean(img?.trim()));
+  if (urls.length === 0) return instruction;
   return [
     { type: "text", text: instruction },
-    { type: "image_url", image_url: { url: toDataUrl(image) } },
+    ...urls.map((img) => ({
+      type: "image_url" as const,
+      image_url: { url: toDataUrl(img) },
+    })),
   ];
 }
 
@@ -150,7 +158,10 @@ const IdkResultSchema = z.object({
   hint: z.string().min(1),
 });
 
+const AnnotateStatusSchema = z.enum(["solid", "incomplete", "blocked"]);
+
 const AnnotateResultSchema = z.object({
+  status: AnnotateStatusSchema.optional(),
   annotations: z
     .array(
       z.discriminatedUnion("tool", [
@@ -186,6 +197,7 @@ const EXTRACT_SYSTEM = [
   '- Exercise 5 with parts a) and b) → labels "5a" and "5b" (never a bare "5" when sub-parts exist).',
   '- A standalone "Question 2" or "Exercise 4" with no a)/b) → label "2" or "4".',
   "In each text field, transcribe the complete problem exactly as printed, including every given value, coefficient, variable, unit, and condition needed to solve it (for example: \"A car travels 120 km in 2 hours. Find its average speed.\").",
+  "Copy tables in full — every header, row, face, probability, coefficient, and cell. Never invent, round, or substitute a missing number; if a digit is unreadable, write [illegible] rather than guessing.",
   "Never drop numbers, units, or definitions, and never shorten a problem to a bare title — a solver reading only the text field must have everything required to work the problem.",
   "Never answer or solve. If no question is legible, return an empty array.",
 ].join(" ");
@@ -203,6 +215,7 @@ const SCOUT_SYSTEM = [
 
 const TUTOR_SYSTEM = [
   "You are a Socratic tutor inside a study companion.",
+  "Use only the given values from the printed question. Never invent, replace, or recall a typical table, coefficient, or probability.",
   "Never give the final answer, a numeric result, or a completed solution.",
   "Ask one focused question or name one next step that moves the student forward.",
   "Follow the hint ladder: level 0 is the smallest nudge; level 3 is the most explicit guidance that still leaves the final step to the student.",
@@ -212,19 +225,24 @@ const TUTOR_SYSTEM = [
 
 const ANNOTATE_SYSTEM = [
   "You mark a shared whiteboard beside a student working on a question.",
-  "You are given the printed question as text and an image of the student's visible work.",
-  "Before judging the student's work, work out what the question asks and what a correct approach and answer look like, including the required form of the result.",
+  "You are given the printed question as text, an optional capture of the printed page, and an image of the student's visible work.",
+  "The printed page and the Question text are the only source of given values. Never invent, replace, or recall a typical table, coefficient, or probability. If the text is missing a number that is visible on the printed page, use the printed page. If a value is not visible in either, do not guess.",
+  "Before judging the student's work, work out what the question asks and what a correct approach looks like from those given values only, including the required form of the result.",
   "Check the student's setup and method first, before the detailed working: did they choose the right operation, formula, or rule; apply it in the right order and direction; and is the result in the form the question asks for? A wrong method, a wrong order or direction of operations, or an answer in the wrong form is a concrete error. Annotate it.",
   "Then check the execution: silently re-read every copied value, symbol, sign, label, and unit and compare it to the question, and follow the student's steps for slips.",
   "A mismatch between the student's transcription and the question — a wrong value, a dropped or flipped sign, a swapped or reordered term, a misread digit, a missing value, or a wrong label — is a concrete error. A computational slip, an algebra error, a wrong order of operations, or a misapplied rule is also a concrete error.",
   "Annotate ONLY when you can point at a specific, concrete error in the student's visible work.",
-  "If the work is correct, or genuinely incomplete with no committed wrong step, or blank, return an empty annotations array and mark nothing. Do not guess at work you cannot read, but do not skip a clear methodological or structural mistake just because the handwriting is messy.",
+  "Set status to solid when the student has finished the asked quantity and the committed work is correct against the printed given values. Prefer solid even when handwriting is messy, as long as the written result and method are readable and match those values. Never invent given values to reach solid.",
+  "Set status to incomplete only when the board is blank, the student has not finished the asked quantity, or you cannot read enough to judge. Do not use incomplete just because handwriting is imperfect. Never guess.",
+  "Set status to blocked when there is a concrete error.",
+  "If the work is solid or incomplete, return an empty annotations array and mark nothing. Do not skip a clear methodological or structural mistake just because the handwriting is messy or the work is typed.",
   "Do not add reminders, encouragement, general advice, or stylistic notes: a missing annotation is better than a wrong one, but a clear error should not be skipped.",
   "When there is a clear error, find the one region that most likely contains it.",
   "Ring that region with a single ellipse that encloses the error with a little padding; do not fill it.",
   "Write one concise comment of one or two sentences that names the specific error and what to re-examine, without revealing the final answer or the corrected value. For a method or order error, say what is set up or applied incorrectly. For a transcription error, say which written value does not match the question. Place it BESIDE the ring — to the right if there is room, otherwise to the left. Never place the comment on top of the student's writing or inside the ring.",
   "Never erase, remove, move, or cover the student's work, and never write the final answer or a numeric result.",
-  'Coordinates are in an 800x1200 canvas. Respond with strict JSON: {"annotations":[{"tool":"shape","shape":"ellipse","x":0,"y":0,"width":0,"height":0},{"tool":"text","x":0,"y":0,"source":"short note"}]}. When no error is present, respond exactly {"annotations":[]}.',
+  "Images, when present: first the printed-page document capture (given values), then a close-up of the student's work filling an 800x1200 frame. Typed text may also be listed in the prompt; treat it as the student's work even if the board image is hard to read. Place marks only on the student-work image coordinates.",
+  'Coordinates are in that 800x1200 image. Respond with strict JSON: {"status":"solid|incomplete|blocked","annotations":[{"tool":"shape","shape":"ellipse","x":0,"y":0,"width":0,"height":0},{"tool":"text","x":0,"y":0,"source":"short note"}]}. When status is solid or incomplete, annotations must be []. When blocked, include the ellipse and comment.',
 ].join(" ");
 
 const IDK_SYSTEM = [
@@ -435,6 +453,11 @@ export class OpenCodeAdapter implements LLMAdapter {
       `Prior turns:\n${history}`,
     ];
     if (input.message) lines.push(`Student asks:\n${input.message}`);
+    if (input.documentImage) {
+      lines.push(
+        "A capture of the printed page is attached; use only the given values visible there or in the Question text."
+      );
+    }
     if (input.image) {
       lines.push(
         "The student's work is attached as an image; ground your question in what it actually shows."
@@ -443,13 +466,14 @@ export class OpenCodeAdapter implements LLMAdapter {
 
     const messages: ChatMessage[] = [
       { role: "system", content: TUTOR_SYSTEM },
-      { role: "user", content: userContent(lines.join("\n\n"), input.image) },
+      { role: "user", content: userContent(lines.join("\n\n"), input.documentImage, input.image) },
     ];
+    const useVision = Boolean(input.image || input.documentImage);
     const data = await this.jsonCall(
       messages,
       {
-        model: input.image ? this.visionModel() : this.textModel(),
-        maxTokens: input.image ? VISION_MAX_TOKENS : 900,
+        model: useVision ? this.visionModel() : this.textModel(),
+        maxTokens: useVision ? VISION_MAX_TOKENS : 900,
       },
       TutorResultSchema
     );
@@ -517,7 +541,7 @@ export class OpenCodeAdapter implements LLMAdapter {
     };
   }
 
-  async annotate(input: AnnotateInput): Promise<BoardAnnotationTurn[]> {
+  async annotate(input: AnnotateInput): Promise<AnnotateResult> {
     const boardSummary =
       input.board.length > 0
         ? input.board.map((el) => `${el.tool}:${el.id}`).join(", ")
@@ -528,8 +552,16 @@ export class OpenCodeAdapter implements LLMAdapter {
     ];
     if (input.hint) lines.push(`Tutor hint:\n${input.hint}`);
     if (input.message) lines.push(`Student asks:\n${input.message}`);
+    if (input.transcript?.trim()) {
+      lines.push(`Student typed on the board:\n${input.transcript.trim()}`);
+    }
     lines.push(`Canvas elements:\n${boardSummary}`);
 
+    if (input.documentImage) {
+      lines.push(
+        "A capture of the printed question is attached first; use only those given values."
+      );
+    }
     if (input.image) {
       lines.push(
         "The student's canvas is attached as an image; place marks over the exact region that needs attention."
@@ -537,21 +569,25 @@ export class OpenCodeAdapter implements LLMAdapter {
     }
     const messages: ChatMessage[] = [
       { role: "system", content: ANNOTATE_SYSTEM },
-      { role: "user", content: userContent(lines.join("\n\n"), input.image) },
+      {
+        role: "user",
+        content: userContent(lines.join("\n\n"), input.documentImage, input.image),
+      },
     ];
     // The vision model is a reasoning model; too small a budget is spent on
     // hidden reasoning and returns empty content (finish_reason=length).
+    const useVision = Boolean(input.image || input.documentImage);
     const data = await this.jsonCall(
       messages,
       {
-        model: input.image ? this.visionModel() : this.textModel(),
-        maxTokens: input.image ? VISION_MAX_TOKENS : 500,
+        model: useVision ? this.visionModel() : this.textModel(),
+        maxTokens: useVision ? VISION_MAX_TOKENS : 500,
       },
       AnnotateResultSchema
     );
     input.onPrompt?.(toPromptMessages(messages));
 
-    return data.annotations.map((annotation): BoardAnnotationTurn => {
+    const annotations = data.annotations.map((annotation): BoardAnnotationTurn => {
       const id = `tutor-${annotation.tool}-${randomUUID()}`;
       if (annotation.tool === "text") {
         return {
@@ -584,6 +620,9 @@ export class OpenCodeAdapter implements LLMAdapter {
         element: { id, author: "tutor", points: annotation.points },
       };
     });
+    const status =
+      data.status ?? (annotations.length > 0 ? "blocked" : "incomplete");
+    return { status, annotations };
   }
 }
 

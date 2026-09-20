@@ -9,12 +9,14 @@ import {
 } from "react";
 import { BoardCarousel } from "@/board/BoardCarousel";
 import { renderBoardToJpeg, renderBoardViewportToJpeg } from "@/board/boardImage";
+import { annotateCropFor, boardTranscript } from "@/board/workBounds";
 import { BoardJumpStrip } from "@/board/BoardJumpStrip";
 import { BoardSurface } from "@/board/BoardSurface";
 import { BoardToolbar } from "@/board/BoardToolbar";
 import { buildBoardPdf, buildBoardPdfPages } from "@/board/exportPdf";
 import { neighborQuestionId } from "@/board/multiBoard";
 import { useMultiBoardSession } from "@/board/useMultiBoardSession";
+import { annotationBarKind } from "@/board/workStatus";
 import { BOARD_VIEWBOX, type BoardElement } from "@/contracts/board";
 import { normalizeQuestionLabel } from "@/lib/questionLabel";
 import { subscribeWorksheet } from "@/session/worksheetChannel";
@@ -87,19 +89,38 @@ function BoardShell({ sessionUuid }: { sessionUuid: string }) {
     [],
   );
 
-  /** Send a snapshot to the agent so it can annotate the board over the SSE. */
+  const [checkingQuestionId, setCheckingQuestionId] = useState<string | null>(
+    null,
+  );
+
   const sendSnapshot = useCallback(
     async (questionId: string, elements: BoardElement[]) => {
-      if (elements.length === 0) return;
-      const image = renderBoardToJpeg(elements);
-      if (!image) return;
-      const res = await fetch(`/session/${sessionUuid}/turn`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ kind: "annotate", questionId, image }),
-      });
-      if (!res.ok) {
-        throw new Error(`annotate request failed: ${res.status}`);
+      const student = elements.filter((el) => el.author === "student");
+      if (student.length === 0) return;
+      const crop = annotateCropFor(student);
+      const image = renderBoardToJpeg(student, 1, crop);
+      if (!image) {
+        throw new Error("annotate snapshot raster failed");
+      }
+      const transcript = boardTranscript(student);
+      setCheckingQuestionId(questionId);
+      try {
+        const res = await fetch(`/session/${sessionUuid}/turn`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            kind: "annotate",
+            questionId,
+            image,
+            crop,
+            ...(transcript ? { transcript } : {}),
+          }),
+        });
+        if (!res.ok) {
+          throw new Error(`annotate request failed: ${res.status}`);
+        }
+      } finally {
+        setCheckingQuestionId((id) => (id === questionId ? null : id));
       }
     },
     [sessionUuid],
@@ -148,6 +169,7 @@ function BoardShell({ sessionUuid }: { sessionUuid: string }) {
     moveText,
     moveSelection,
     dismissTutorMarks,
+    workStatus,
   } = useMultiBoardSession({
     sessionUuid,
     mode: "live",
@@ -257,7 +279,18 @@ function BoardShell({ sessionUuid }: { sessionUuid: string }) {
     ? (annotationStatus[activeQuestionId] ?? "idle")
     : "idle";
   const hasTutorMarks = elements.some((el) => el.author === "tutor");
-  const showAnnotationBar = hasTutorMarks || activeStatus === "working";
+  const activeWorkStatus = activeQuestionId
+    ? workStatus[activeQuestionId]
+    : undefined;
+  const looksSolid = activeWorkStatus === "solid" && !hasTutorMarks;
+  const isChecking = checkingQuestionId === activeQuestionId;
+  const barKind = annotationBarKind({
+    checking: isChecking,
+    looksSolid,
+    hasTutorMarks,
+    working: activeStatus === "working",
+  });
+  const showAnnotationBar = barKind !== null;
   const tutorSignature = elements
     .filter((el) => el.author === "tutor")
     .map((el) => el.id)
@@ -340,36 +373,47 @@ function BoardShell({ sessionUuid }: { sessionUuid: string }) {
       {showAnnotationBar ? (
         <div
           className="board-annotation-bar"
-          data-status={activeStatus}
+          data-status={barKind}
           role="status"
           aria-live="polite"
         >
           <span className="board-annotation-message">
-            {activeStatus === "working"
-              ? "Resolving — the Tutor will hold off."
-              : "The Tutor circled a step to reconsider."}
+            {barKind === "checking" ? (
+              <>
+                <span className="board-capture-spinner" aria-hidden="true" />
+                Checking your work…
+              </>
+            ) : barKind === "solid" ? (
+              "This looks solid."
+            ) : barKind === "working" ? (
+              "Resolving — the Tutor will hold off."
+            ) : (
+              "The Tutor circled a step to reconsider."
+            )}
           </span>
-          <div className="board-annotation-actions">
-            <button
-              type="button"
-              className={
-                activeStatus === "working"
-                  ? "board-annotation-btn is-active"
-                  : "board-annotation-btn"
-              }
-              aria-pressed={activeStatus === "working"}
-              onClick={markWorking}
-            >
-              Working on it
-            </button>
-            <button
-              type="button"
-              className="board-annotation-btn is-primary"
-              onClick={markResolved}
-            >
-              Resolved
-            </button>
-          </div>
+          {barKind === "error" || barKind === "working" ? (
+            <div className="board-annotation-actions">
+              <button
+                type="button"
+                className={
+                  barKind === "working"
+                    ? "board-annotation-btn is-active"
+                    : "board-annotation-btn"
+                }
+                aria-pressed={barKind === "working"}
+                onClick={markWorking}
+              >
+                Working on it
+              </button>
+              <button
+                type="button"
+                className="board-annotation-btn is-primary"
+                onClick={markResolved}
+              >
+                Resolved
+              </button>
+            </div>
+          ) : null}
         </div>
       ) : null}
       <BoardCarousel

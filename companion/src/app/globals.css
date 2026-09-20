@@ -348,6 +348,27 @@ body {
   background: color-mix(in srgb, var(--tutor) 12%, var(--paper));
 }
 
+.board-annotation-bar[data-status="solid"] {
+  border-bottom-color: color-mix(in srgb, var(--focus) 30%, transparent);
+  background: color-mix(in srgb, var(--focus) 8%, var(--paper));
+}
+
+.board-annotation-bar[data-status="solid"] .board-annotation-message {
+  color: var(--focus);
+}
+
+.board-annotation-bar[data-status="checking"] {
+  border-bottom-color: color-mix(in srgb, var(--ink-muted) 35%, transparent);
+  background: color-mix(in srgb, var(--ink-muted) 8%, var(--paper));
+}
+
+.board-annotation-bar[data-status="checking"] .board-annotation-message {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: var(--ink-muted);
+}
+
 .board-annotation-message {
   color: var(--tutor);
   font-size: 0.82rem;

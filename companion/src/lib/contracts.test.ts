@@ -192,6 +192,22 @@ describe("contracts: board turns", () => {
     ).toBe(false);
   });
 
+  it("accepts an optional crop and transcript on the annotate turn", () => {
+    const parsed = TurnRequestSchema.safeParse({
+      kind: "annotate",
+      questionId: "q1",
+      image: FIXTURE_JPEG_B64,
+      crop: { x: 40, y: 60, width: 200, height: 120 },
+      transcript: "p(even) = 0.4",
+    });
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    expect(parsed.data.kind).toBe("annotate");
+    if (parsed.data.kind !== "annotate") return;
+    expect(parsed.data.crop).toEqual({ x: 40, y: 60, width: 200, height: 120 });
+    expect(parsed.data.transcript).toBe("p(even) = 0.4");
+  });
+
   it("accepts a dismissAnnotation turn", () => {
     expect(
       TurnRequestSchema.safeParse({
@@ -239,6 +255,27 @@ describe("contracts: board SSE events", () => {
     expect(safeParseSseEvent({ type: "board.annotate", data: {} }).success).toBe(
       false,
     );
+  });
+
+  it("accepts an optional solid or blocked status on board.annotate", () => {
+    expect(
+      safeParseSseEvent({
+        type: "board.annotate",
+        data: { questionId: "q1", status: "solid" },
+      }).success,
+    ).toBe(true);
+    expect(
+      safeParseSseEvent({
+        type: "board.annotate",
+        data: { questionId: "q1", status: "blocked" },
+      }).success,
+    ).toBe(true);
+    expect(
+      safeParseSseEvent({
+        type: "board.annotate",
+        data: { questionId: "q1", status: "incomplete" },
+      }).success,
+    ).toBe(false);
   });
 });
 
@@ -398,6 +435,13 @@ describe("contracts: openapi.yaml", () => {
     expect(sse.discriminator.mapping["board.annotate"]).toBe(
       "#/components/schemas/BoardAnnotateEvent"
     );
+    const annotateEvent = schemas.BoardAnnotateEvent as {
+      properties: { data: { properties: { status?: { enum?: string[] } } } };
+    };
+    expect(annotateEvent.properties.data.properties.status?.enum).toEqual([
+      "solid",
+      "blocked",
+    ]);
   });
 
   it("never advertises a final-answer field on TutorTurn", () => {

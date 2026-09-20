@@ -58,6 +58,8 @@ export interface TutorInput {
   captureHash?: string;
   /** Optional student-work snapshot attached to this turn. */
   image?: string;
+  /** Latest Document capture, so given values come from the printed page. */
+  documentImage?: string;
   onPrompt?: PromptSink;
 }
 
@@ -97,7 +99,34 @@ export interface AnnotateInput {
   board: BoardElement[];
   /** Snapshot of the rendered canvas (base64 JPEG), for vision-guided marks. */
   image?: string;
+  /** Latest Document capture of the printed question (tables, given values). */
+  documentImage?: string;
+  /** ViewBox region shown in `image` when the snapshot is a close-up of student work. */
+  crop?: { x: number; y: number; width: number; height: number };
+  /** Student-typed board text, so the model can read math without OCR. */
+  transcript?: string;
   onPrompt?: PromptSink;
+}
+
+/** Annotate-pass verdict. Reuses Scout's solid/blocked; incomplete is annotate-only. */
+export type AnnotateStatus = "solid" | "incomplete" | "blocked";
+
+export interface AnnotateResult {
+  status: AnnotateStatus;
+  annotations: BoardAnnotationTurn[];
+}
+
+/** Array form is the legacy FakeAdapter / stub shape; treat marks as blocked. */
+export type AnnotateOutput = AnnotateResult | BoardAnnotationTurn[];
+
+export function normalizeAnnotateOutput(raw: AnnotateOutput): AnnotateResult {
+  if (Array.isArray(raw)) {
+    return {
+      status: raw.length > 0 ? "blocked" : "incomplete",
+      annotations: raw,
+    };
+  }
+  return { status: raw.status, annotations: raw.annotations };
 }
 
 export interface LLMAdapter {
@@ -109,5 +138,5 @@ export interface LLMAdapter {
   watch(input: WatchInput): Promise<WatchVerdict>;
   idk(input: IdkInput): Promise<TutorTurn>;
   /** Additive Tutor marks on the shared canvas (never erase/remove/move student work). */
-  annotate(input: AnnotateInput): Promise<BoardAnnotationTurn[]>;
+  annotate(input: AnnotateInput): Promise<AnnotateOutput>;
 }

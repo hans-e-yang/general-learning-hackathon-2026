@@ -219,6 +219,21 @@ describe("opencode-adapter/tutor", () => {
     expect(turn.escalation).toBe("same");
   });
 
+  it("forbids inventing given values in the tutor prompt", async () => {
+    fetchMock.mockResolvedValueOnce(
+      completion({ hint: "Which face values are given?", level: 0, escalation: "same" })
+    );
+    await adapter().tutor({
+      questionId: "q1",
+      questionText: "A biased die...",
+      threadHistory: [],
+      currentLevel: 0,
+    });
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    const system = body.messages.find((m: { role: string }) => m.role === "system");
+    expect(system.content).toMatch(/never invent|do not invent|only the given/i);
+  });
+
   it("rejects a hint that looks like a final answer", async () => {
     fetchMock.mockResolvedValueOnce(
       completion({ hint: "The answer is 42.", level: 3, escalation: "up" })
@@ -366,7 +381,7 @@ describe("opencode-adapter/annotate (canvas tools)", () => {
       })
     );
 
-    const turns = await adapter().annotate({
+    const { annotations: turns } = await adapter().annotate({
       questionId: "q1",
       questionText: "x?",
       board: [],
@@ -402,8 +417,46 @@ describe("opencode-adapter/annotate (canvas tools)", () => {
 
   it("returns an empty list when the model proposes no marks", async () => {
     fetchMock.mockResolvedValueOnce(completion({ annotations: [] }));
-    const turns = await adapter().annotate({ questionText: "x?", board: [] });
-    expect(turns).toEqual([]);
+    const result = await adapter().annotate({ questionText: "x?", board: [] });
+    expect(result.annotations).toEqual([]);
+  });
+
+  it("maps a solid verdict with empty annotations", async () => {
+    fetchMock.mockResolvedValueOnce(completion({ status: "solid", annotations: [] }));
+    const result = await adapter().annotate({ questionText: "x?", board: [] });
+    expect(result).toEqual({ status: "solid", annotations: [] });
+  });
+
+  it("maps a blocked verdict onto tutor-authored marks", async () => {
+    fetchMock.mockResolvedValueOnce(
+      completion({
+        status: "blocked",
+        annotations: [{ tool: "text", x: 1, y: 2, source: "re-check this step" }],
+      }),
+    );
+    const result = await adapter().annotate({ questionText: "x?", board: [] });
+    expect(result).toMatchObject({
+      status: "blocked",
+      annotations: [{ kind: "board-text", element: { author: "tutor", source: "re-check this step" } }],
+    });
+  });
+
+  it("treats a missing status with empty annotations as incomplete", async () => {
+    fetchMock.mockResolvedValueOnce(completion({ annotations: [] }));
+    const result = await adapter().annotate({ questionText: "x?", board: [] });
+    expect(result).toEqual({ status: "incomplete", annotations: [] });
+  });
+
+  it("asks the model for solid, incomplete, or blocked — never a guessed solid", async () => {
+    fetchMock.mockResolvedValueOnce(completion({ annotations: [] }));
+    await adapter().annotate({ questionText: "x?", board: [] });
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    const system = body.messages.find((m: { role: string }) => m.role === "system");
+    expect(system.content).toMatch(/"status":"solid\|incomplete\|blocked"/);
+    expect(system.content).toMatch(/incomplete/i);
+    expect(system.content).toMatch(/cannot read|do not guess|never guess/i);
+    expect(system.content).toMatch(/messy|handwriting/i);
+    expect(system.content).toMatch(/solid even|still set solid|prefer solid/i);
   });
 
   it("keeps the small budget on the text-only path", async () => {
@@ -421,6 +474,57 @@ describe("opencode-adapter/annotate (canvas tools)", () => {
     await expect(adapter().annotate({ questionText: "x?", board: [] })).rejects.toThrow(
       /malformed output/
     );
+  });
+
+  it("sends typed board text in the prompt so the model does not have to OCR it", async () => {
+    fetchMock.mockResolvedValueOnce(completion({ annotations: [] }));
+    await adapter().annotate({
+      questionId: "q1",
+      questionText: "biased die",
+      board: [],
+      image: "Zm9vYmFy",
+      transcript: "p(even) = p(2)+p(4)+p(6)\n= 0.1+0.2+0=0.4",
+    });
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    const user = body.messages.find((m: { role: string }) => m.role === "user");
+    const text =
+      typeof user.content === "string"
+        ? user.content
+        : user.content.find((p: { type: string }) => p.type === "text").text;
+    expect(text).toContain("p(even) = p(2)+p(4)+p(6)");
+    expect(text).toContain("0.1+0.2+0=0.4");
+  });
+
+  it("attaches the printed-page capture next to the board snapshot", async () => {
+    fetchMock.mockResolvedValueOnce(completion({ annotations: [] }));
+    await adapter().annotate({
+      questionId: "q1",
+      questionText: "biased die",
+      board: [],
+      image: "Ym9hcmQ=",
+      documentImage: "cGFnZQ==",
+    });
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    const user = body.messages.find((m: { role: string }) => m.role === "user");
+    const parts = user.content as Array<Record<string, unknown>>;
+    expect(parts.filter((p) => p.type === "image_url")).toEqual([
+      { type: "image_url", image_url: { url: "data:image/jpeg;base64,cGFnZQ==" } },
+      { type: "image_url", image_url: { url: "data:image/jpeg;base64,Ym9hcmQ=" } },
+    ]);
+    const text = parts.find((p) => p.type === "text")?.text as string;
+    expect(text.toLowerCase()).toMatch(/printed (question|page)|document capture|given values/);
+  });
+
+  it("tells the model not to invent given values", async () => {
+    fetchMock.mockResolvedValueOnce(completion({ annotations: [] }));
+    await adapter().annotate({
+      questionId: "q1",
+      questionText: "biased die",
+      board: [],
+    });
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    const system = body.messages.find((m: { role: string }) => m.role === "system");
+    expect(system.content).toMatch(/never invent|do not invent|only the given/i);
   });
 });
 

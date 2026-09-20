@@ -92,7 +92,7 @@ a refresh.
 | `watch({captureHash, pageIndex, questionText?, draftText?, recurrenceCount?})` → `WatchVerdict` | Live canvas watcher. Returns `{flag, severity?, ghostKey?, reasoning}` (#22). | `/material` after a non-deduped capture. |
 | `idk({questionId, questionText, draftText?, image?})` → `TutorTurn` | Smallest-unblock escape hatch (#23). Level 0; never a final answer. Uses the vision model when an `image` is attached. | `/turn idk`. |
 | `triage({captureHash, pageIndex, image, contextSummary})` → `TriageVerdict` | Small vision gate: does this capture carry information the session context does not already hold? | `/material`, before `extract` (#28). |
-| `annotate({questionId?, questionText?, draftText?, hint?, message?, captureHash?, board, image?})` → `BoardAnnotationTurn[]` | Additive Tutor marks on the shared canvas: text, shapes (circle/arrow/line), pen strokes. Uses the vision model when a canvas `image` is attached. Never erase/remove/move student work; never a final answer. | Loop, after every `tutor`/`idk` turn (`requestCheck`, `ask`, `assess`, `idk`, watcher escalation) and on the companion's idle-snapshot `annotate` turn. |
+| `annotate({questionId?, questionText?, draftText?, hint?, message?, captureHash?, board, image?, documentImage?, crop?, transcript?})` → `AnnotateResult` `{status:"solid"|"incomplete"|"blocked", annotations}` | Additive Tutor marks on the shared canvas: text, shapes (circle/arrow/line), pen strokes. `solid` is a complete correct answer (no marks); `incomplete` is blank/unfinished/unreadable (no marks); `blocked` is a concrete error (ring + comment). Uses the vision model when a canvas `image` or printed-page `documentImage` is attached. Idle snapshots send a close-up `crop` plus typed `transcript`; the loop attaches the latest Document capture so given values are not invented. Never erase/remove/move student work; never a final answer. | Loop, after every `tutor`/`idk` turn (`requestCheck`, `ask`, `assess`, `idk`, watcher escalation) and on the companion's idle-snapshot `annotate` turn. |
 
 `FakeAdapter` is the default (`CIRCLR_LLM=fake`). All 110 tests run against it
 without network calls or vendor keys per the spec's test discipline.
@@ -288,24 +288,36 @@ endpoint it always did.
   | `board-shape-move` | `board.shape-move` `{elementId,x,y,width,height}` |
 
 - **Agent → canvas.** After every `tutor`/`idk` turn the loop calls
-  `adapter.annotate()`, which returns zero or more **additive** turns
+  `adapter.annotate()`, which returns an **`AnnotateResult`**:
+  `{ status: "solid" | "incomplete" | "blocked", annotations }`.
+  `blocked` carries zero or more **additive** turns
   (`BoardAnnotationTurn` = pen | shape | text, `author:"tutor"`). It is also
   driven directly by the companion: the board UI watches for a quiet canvas
   (~5s without student ink), rasterizes the active board to a JPEG, and posts
-  `POST /turn` `{ kind:"annotate", questionId, image }`. The loop runs
+  `POST /turn` `{ kind:"annotate", questionId, image, crop?, transcript? }`. The loop runs
   `adapter.annotate()` with that snapshot (vision model when an image is
-  attached), clears the agent's previous marks, and streams the new batch. Each
+  attached), clears the agent's previous marks, and streams the new batch. The
+  JPEG is a close-up of student ink/text stretched to 800x1200; `crop` maps the
+  model's image-space marks back onto the board, and `transcript` carries typed
+  math so the tutor can read it without OCR. Each
   batch is one **ring** (an ellipse around the suspected error) plus a
   one-to-two-sentence **reasoning comment**; `arrangeAnnotations()` re-anchors
   the text mark to the side of
   its ring (flipping left near the right edge) so the Tutor never writes over the
-  student's work. The clear is announced as `board.annotate` `{questionId}` so
+  student's work. The clear is announced as `board.annotate`
+  `{questionId, status?: "solid"|"blocked"}` so
   the client drops its stale Tutor marks before the following `board.element`
   frames arrive; those frames carry an optional `questionId` so the companion
-  places each mark on the matching per-question board. The companion shows a
+  places each mark on the matching per-question board. `status:"solid"` is a
+  conclusive correct pass — empty annotations, no `board.element` frames, and
+  the companion shows *This looks solid.* An incomplete or unreadable empty pass
+  does not emit `board.annotate`, so a flaky vision miss cannot wipe
+  marks that are already on the board. While the idle snapshot is in flight the
+  companion shows *Checking your work…*. The companion shows a
   status bar while marks are present — *Working on it* (the idle annotator holds
   off) and *Resolved* (`dismissAnnotation`, which clears the board's Tutor marks
-  on both sides). Anchoring/erasing the student's work is not in the annotation
+  on both sides). A later student revision hides the solid indicator until a
+  later pass confirms again. Anchoring/erasing the student's work is not in the annotation
   toolset, and annotation failures are swallowed so they never break the tutor
   turn.
 

@@ -308,6 +308,22 @@ components:
         image:
           type: string
           description: Base64-encoded JPEG (FFD8FF prefix) snapshot of the student's canvas
+        crop:
+          type: object
+          description: ViewBox region shown in the image when the snapshot is a close-up of student work
+          required: [x, y, width, height]
+          properties:
+            x:
+              type: number
+            y:
+              type: number
+            width:
+              type: number
+            height:
+              type: number
+        transcript:
+          type: string
+          description: Student-typed board text, so the tutor can read math without OCR
     DismissAnnotationTurn:
       type: object
       required: [kind, questionId]
@@ -766,6 +782,10 @@ components:
             questionId:
               type: string
               description: Board whose previous Tutor marks should be cleared before the new batch
+            status:
+              type: string
+              enum: [solid, blocked]
+              description: solid when the student's committed work is a complete correct answer; blocked when this pass replaces marks for an error. Omitted on incomplete or dismiss.
     BoardRemoveEvent:
       type: object
       required: [type, data]

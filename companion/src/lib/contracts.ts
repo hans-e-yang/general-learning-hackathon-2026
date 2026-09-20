@@ -39,6 +39,10 @@ export type SessionInitResponse = z.infer<typeof SessionInitResponseSchema>;
 export const AssessmentStatusSchema = z.enum(["blocked", "on-track", "solid"]);
 export type AssessmentStatus = z.infer<typeof AssessmentStatusSchema>;
 
+/** Conclusive annotate verdicts on the wire. Incomplete is signaled by omitting status. */
+export const BoardAnnotateStatusSchema = z.enum(["solid", "blocked"]);
+export type BoardAnnotateStatus = z.infer<typeof BoardAnnotateStatusSchema>;
+
 export const ScoutVerdictSchema = z.object({
   status: AssessmentStatusSchema,
   reasoning: z.string().min(1),
@@ -179,6 +183,15 @@ export const TurnRequestSchema = z.discriminatedUnion("kind", [
     kind: z.literal("annotate"),
     questionId: z.string(),
     image: base64JpegSchema,
+    crop: z
+      .object({
+        x: z.number(),
+        y: z.number(),
+        width: z.number().positive(),
+        height: z.number().positive(),
+      })
+      .optional(),
+    transcript: z.string().optional(),
   }),
   z.object({
     kind: z.literal("dismissAnnotation"),
@@ -316,7 +329,10 @@ export const SseEventSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     type: z.literal("board.annotate"),
-    data: z.object({ questionId: z.string() }),
+    data: z.object({
+      questionId: z.string(),
+      status: BoardAnnotateStatusSchema.optional(),
+    }),
   }),
   z.object({
     type: z.literal("board.remove"),
