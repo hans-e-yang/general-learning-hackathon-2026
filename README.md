@@ -1,6 +1,9 @@
 # Circlr
 
+<img width="1613" height="1305" alt="image" src="https://github.com/user-attachments/assets/b3dfea25-4737-476e-a279-0511690da21a" />
+
 A split-screen tutor that reads the assignment already on your screen and coaches you through it without ever writing the answer.
+
 
 It is so easy to skip through assignments and practice questions to the final answer without actually understanding the concepts those problems are supposed to train. Circlr sits on the other side of that habit. Not another chatbot you dump work into. A tutor that stays next to the problem you already have open, watches how you work, and refuses to finish it for you.
 
